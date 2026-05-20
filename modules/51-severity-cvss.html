@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Severity Assessment & CVSS - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .metric-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px,1fr)); gap:1rem; margin:1rem 0; }
+        .metric-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1rem; }
+        .metric-card h4 { color:var(--accent); margin-bottom:0.5rem; font-size:0.95rem; }
+        .metric-card .values { font-size:0.85rem; color:var(--text-muted); }
+        .warning-box { background:var(--red-dim); border:1px solid var(--red); border-radius:8px; padding:1rem; margin:1rem 0; }
+        .rule-box { background:var(--green-dim); border:1px solid var(--green); border-radius:8px; padding:1rem; margin:1rem 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 5: Operations &gt; Severity Assessment &amp; CVSS
+        </div>
+
+        <div class="page-header">
+            <h1>Severity Assessment &amp; CVSS</h1>
+            <p class="subtitle">
+                CVSS スコアの正しい計算方法と、BB における severity 主張の戦略。
+                Over-claiming は信頼を失う。Under-claiming は bounty を減らす。正確さが最重要。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <!-- CVSS 3.1 -->
+        <div class="section">
+            <h2>CVSS 3.1 Base Metrics</h2>
+            <p>CVSS (Common Vulnerability Scoring System) は脆弱性の深刻度を数値化する標準。BB では Base Score のみ使用されることが多い。</p>
+
+            <h3>Exploitability Metrics</h3>
+            <div class="metric-grid">
+                <div class="metric-card">
+                    <h4>Attack Vector (AV)</h4>
+                    <p class="values">Network (N) / Adjacent (A) / Local (L) / Physical (P)</p>
+                    <p>BB ではほぼ Network。Web アプリ = AV:N。ローカルファイル読み込みが必要 = AV:L。</p>
+                </div>
+                <div class="metric-card">
+                    <h4>Attack Complexity (AC)</h4>
+                    <p class="values">Low (L) / High (H)</p>
+                    <p>AC:L = 特殊条件なしで攻撃可能。AC:H = race condition、特定の設定が必要等。安易に AC:L を主張しない。</p>
+                </div>
+                <div class="metric-card">
+                    <h4>Privileges Required (PR)</h4>
+                    <p class="values">None (N) / Low (L) / High (H)</p>
+                    <p>PR:N = 認証不要。PR:L = 一般ユーザ。PR:H = admin。「無料登録可能」でも PR:L。</p>
+                </div>
+                <div class="metric-card">
+                    <h4>User Interaction (UI)</h4>
+                    <p class="values">None (N) / Required (R)</p>
+                    <p>UI:N = 被害者の操作不要。UI:R = リンクをクリックさせる必要あり（Reflected XSS 等）。</p>
+                </div>
+            </div>
+
+            <h3>Impact Metrics</h3>
+            <div class="metric-grid">
+                <div class="metric-card">
+                    <h4>Scope (S)</h4>
+                    <p class="values">Unchanged (U) / Changed (C)</p>
+                    <p>S:C = 影響が脆弱コンポーネントの authority を超える（XSS from subdomain to main domain, sandbox escape 等）。判断が最も難しい指標。</p>
+                </div>
+                <div class="metric-card">
+                    <h4>Confidentiality (C)</h4>
+                    <p class="values">None (N) / Low (L) / High (H)</p>
+                    <p>H = 全データ漏洩可能。L = 一部データのみ。N = 情報漏洩なし。</p>
+                </div>
+                <div class="metric-card">
+                    <h4>Integrity (I)</h4>
+                    <p class="values">None (N) / Low (L) / High (H)</p>
+                    <p>H = 任意のデータ変更可能。L = 一部のみ変更可能。N = 改ざん不可。</p>
+                </div>
+                <div class="metric-card">
+                    <h4>Availability (A)</h4>
+                    <p class="values">None (N) / Low (L) / High (H)</p>
+                    <p>H = サービス完全停止可能。L = 一部機能の低下。DoS で安易に H を付けない。</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- CVSS 4.0 -->
+        <div class="section">
+            <h2>CVSS 4.0 概要</h2>
+            <p>2023年11月公開。3.1 からの主な変更点:</p>
+            <ul>
+                <li><strong>Attack Requirements (AT)</strong> が追加 &mdash; AC の細分化</li>
+                <li><strong>Scope 廃止</strong> &mdash; 代わりに Subsequent System Impact (VC/VI/VA + SC/SI/SA) で表現</li>
+                <li><strong>Supplemental Metrics</strong> &mdash; Safety, Automatable, Recovery 等の付加情報</li>
+                <li>スコア計算が大幅に変更（同じ脆弱性でも 3.1 と異なるスコアになりうる）</li>
+            </ul>
+            <p>現時点で HackerOne は 3.1 が主流。huntr/GHSA も 3.1。4.0 対応は platform 次第で移行中。</p>
+        </div>
+
+        <!-- Common Mistakes -->
+        <div class="section">
+            <h2>よくある間違い</h2>
+
+            <div class="warning-box">
+                <h4>Over-claiming</h4>
+                <ul>
+                    <li>「RCE の可能性がある」&mdash; 実証していないなら書かない</li>
+                    <li>AC:L を安易に付ける &mdash; 特定設定が必要なら AC:H</li>
+                    <li>S:C を安易に付ける &mdash; 同一 trust boundary 内なら S:U</li>
+                    <li>C:H で「全データ漏洩」&mdash; 実際に取得できたデータ量で判断</li>
+                    <li>Theoretical escalation で severity を上げる &mdash; 実証した範囲のみ</li>
+                </ul>
+            </div>
+
+            <div class="warning-box">
+                <h4>Under-claiming</h4>
+                <ul>
+                    <li>IDOR で email のみ漏洩 → C:L だが、iteration で全件取得可能なら C:H</li>
+                    <li>Admin panel access を PR:H にしがち → 一般ユーザから escalation できるなら PR:L</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- mei-bb Rules -->
+        <div class="section">
+            <h2>mei-bb Severity Rules</h2>
+
+            <div class="rule-box">
+                <h4>Rule: bb-cvss compute 必須</h4>
+                <p>CVSS スコアの暗算は禁止。必ず <code>bb-cvss compute</code> ツールで計算する。暗算ミスで severity を間違えると信頼を失う。</p>
+            </div>
+
+            <h3>Severity 3-Axis Gate</h3>
+            <table>
+                <thead><tr><th>軸</th><th>内容</th><th>Cap</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Verified</strong></td><td>実機で再現済み</td><td>未検証 = Informative 以下</td></tr>
+                    <tr><td><strong>Chain</strong></td><td>Attack chain が物理的に成立</td><td>Chain 不成立 = Low</td></tr>
+                    <tr><td><strong>Leak</strong></td><td>実際のデータ漏洩/変更を実証</td><td>理論のみ = cap at Low</td></tr>
+                </tbody>
+            </table>
+            <p><strong>Speculation = cap at Low.</strong> 「could potentially」は severity claim の根拠にならない。</p>
+
+            <h3>Precedent Citation</h3>
+            <p>Severity 主張前に同プログラム・同 data class の prior advisory を <code>bb-ghsa list</code> で検索し、先例の severity を引用する。</p>
+            <ul>
+                <li>先例より高い severity を主張する場合、差分を明確に説明</li>
+                <li>先例がない場合、類似プログラムの CVE を参考にする</li>
+                <li>Program-specific severity table がある場合はそれに従う（CVSS スコアより priority）</li>
+            </ul>
+        </div>
+
+        <!-- When to claim High/Critical -->
+        <div class="section">
+            <h2>High/Critical を主張できる条件</h2>
+            <h3>Critical (9.0-10.0)</h3>
+            <ul>
+                <li>Pre-auth RCE (AV:N/AC:L/PR:N/UI:N)</li>
+                <li>Pre-auth full database access</li>
+                <li>Authentication bypass で admin takeover</li>
+                <li>いずれも <strong>実機で完全に実証済み</strong> であること</li>
+            </ul>
+            <h3>High (7.0-8.9)</h3>
+            <ul>
+                <li>Auth bypass (non-admin scope)</li>
+                <li>IDOR with bulk data exfiltration</li>
+                <li>Stored XSS with session hijacking (実証済み)</li>
+                <li>SSRF with internal service access (実際のレスポンスを示す)</li>
+            </ul>
+            <h3>Conservative に判定すべきケース</h3>
+            <ul>
+                <li>影響範囲が限定的（self-only XSS, informational leak）</li>
+                <li>Attack complexity が高い（race condition, 特定設定依存）</li>
+                <li>User interaction が必須（フィッシング前提）</li>
+                <li>Program の severity table で cap されている場合</li>
+            </ul>
+        </div>
+
+        <!-- Real Examples -->
+        <div class="section">
+            <h2>CVSS 実例</h2>
+            <h3>Example 1: IDOR with email leak</h3>
+            <pre><code>GET /api/users/456/profile → returns {"email":"victim@example.com"}
+Vector: AV:N/AC:L/PR:L/UI:N/S:U/C:L/I:N/A:N
+Score: 4.3 (Medium)
+
+理由: PR:L (認証必要), C:L (email のみ, 全データではない), I:N/A:N</code></pre>
+
+            <h3>Example 2: Pre-auth RCE via file upload</h3>
+            <pre><code>POST /upload → webshell execution → whoami returns "www-data"
+Vector: AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H
+Score: 9.8 (Critical)
+
+理由: PR:N (認証不要), 全 impact = H (任意コマンド実行)</code></pre>
+
+            <h3>Example 3: Stored XSS requiring click</h3>
+            <pre><code>Comment field → stored script → victim views page → cookie stolen
+Vector: AV:N/AC:L/PR:L/UI:R/S:C/C:L/I:L/A:N
+Score: 5.4 (Medium)
+
+理由: UI:R (被害者がページを表示する必要), S:C (XSS は scope change)</code></pre>
+        </div>
+
+        <!-- Navigation -->
+        <div class="section" style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border); padding-top:1.5rem;">
+            <a href="50-report-writing.html">&larr; Prev: Report Writing</a>
+            <button class="complete-btn" data-module-id="51-cvss" onclick="toggleComplete('51-cvss')">Mark Complete</button>
+            <a href="52-dup-avoidance.html">Next: Dup Avoidance &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Report Writing &amp; CVSS - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; Report Writing &amp; CVSS
+        </div>
+        <div class="page-header">
+            <h1>Report Writing &amp; CVSS</h1>
+            <p class="subtitle">5 questions - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../modules/50-report-writing.html">&larr; Module に戻る</a>
+            <a href="../quiz.html">Quiz 一覧 &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-50-report', [
+        {
+            question: "バグバウンティレポートにおいて最も重要なセクションはどれか？",
+            options: [
+                "脆弱性の概要（Summary / Title）",
+                "再現手順（Steps to Reproduce）- トリアージャーがコピペで再現できる具体的な手順",
+                "インパクト説明（Impact / Severity）",
+                "推奨する修正方法（Remediation）"
+            ],
+            answer: 1,
+            explanation: "Steps to Reproduceが最重要。理由：1)トリアージャーは再現できなければ検証不能→N/A判定、2)コピペで実行可能な具体的コマンド/手順が必要、3)前提条件（アカウント作成、設定変更等）も明記、4)曖昧な手順は「再現不可」で却下される。インパクトやタイトルは補助的であり、再現性なしには評価自体が始まらない。"
+        },
+        {
+            question: "CVSSベクター AV:N/AC:L/PR:N/UI:N が意味する攻撃条件を平易に説明するとどれか？",
+            options: [
+                "ローカルネットワークから、高い技術力を持つ攻撃者が、管理者権限で、ユーザーの操作なく攻撃可能",
+                "インターネット経由で、特別な条件なく、認証不要で、ユーザー操作も不要で攻撃可能",
+                "物理アクセスが必要で、容易に、一般ユーザー権限で、ユーザーの同意を得て攻撃可能",
+                "隣接ネットワークから、複雑な条件下で、低権限ユーザーとして、リンククリックを要して攻撃可能"
+            ],
+            answer: 1,
+            explanation: "AV:N(Network)=インターネット経由でリモート攻撃可能、AC:L(Low)=特殊な条件不要で容易に実行可能、PR:N(None)=認証や権限不要、UI:N(None)=被害者のユーザー操作不要。これは最も危険な攻撃条件の組み合わせであり、「誰でもいつでもリモートから無条件で攻撃できる」ことを意味する。"
+        },
+        {
+            question: "バグバウンティレポートで「影響の推測（speculation）」を避けるべき理由として最も正確なのはどれか？",
+            options: [
+                "推測は法的リスクがあるため",
+                "実証されていないインパクト主張はAI Slop/低品質レポートと判定され、N/A評価や信頼性低下を招く",
+                "推測を含むレポートは自動的に低いバウンティ額になるため",
+                "ベンダーのセキュリティチームが推測に基づいて作業すると時間の無駄になるため"
+            ],
+            answer: 1,
+            explanation: "未実証のインパクト推測は「AI Slop」シグネチャ（AIが生成した低品質レポートの特徴）と見なされ、トリアージャーの信頼を損なう。「理論的にはRCEが可能」「潜在的にすべてのユーザーデータにアクセスできる」等の未実証主張は、実際に行ったことの証拠のみを報告すべき。推測はseverity inflation（重大度の水増し）と見なされN/Aリスクが高い。"
+        },
+        {
+            question: "huntr.com（OSS脆弱性バウンティプラットフォーム）のレポート形式要件として正しいのはどれか？",
+            options: [
+                "各セクション（Description, Impact, PoC）を別々のファイルに分けて添付する",
+                "単一ファイルでDescription, Impact, Occurrencesを一体的に記述する",
+                "GitHub Issue形式のMarkdownテンプレートに従う",
+                "CVSSスコアとCWE番号を必ず含める"
+            ],
+            answer: 1,
+            explanation: "huntrではレポートを1つのファイル（フォームフィールド）内で完結させる。Description（脆弱性の説明）+ Impact（影響）+ Occurrences（該当コード箇所）を分割せず一体的に記述する。セクションを分割添付すると可読性が下がり、トリアージャーの作業効率が落ちる。各formフィールドとの1:1対応を意識した記述が推奨される。"
+        },
+        {
+            question: "PoCとして最も適切な形式はどれか？",
+            options: [
+                "脆弱性の技術的な詳細を説明するホワイトペーパー",
+                "コピペで実行可能な最小限のcurlコマンド（環境依存を排除し、プレースホルダーを明記）",
+                "脆弱性を突く完全なExploitスクリプト（ワンクリックで全工程を実行）",
+                "スクリーンショットのみ（ブラウザのNetworkタブを含む）"
+            ],
+            answer: 1,
+            explanation: "最適なPoCは「コピペで再現可能な最小限のcurlコマンド」。理由：1)環境依存が最小（curl+ターミナルのみ）、2)トリアージャーが即座に検証可能、3)攻撃の各ステップが明確に分離、4)プレースホルダー（<YOUR_TOKEN>等）で可変部分を明示。完全なExploitスクリプトは過剰であり、スクリーンショットのみは再現手順として不十分。"
+        }
+    ]);
+    </script>
+</body>
+</html>

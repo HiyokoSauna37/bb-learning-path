@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth / SSO Advanced Attacks - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .flow-diagram { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; margin: 1rem 0; font-family: 'Cascadia Code', monospace; font-size: 0.8rem; line-height: 1.6; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 4: Advanced &gt; OAuth / SSO Advanced Attacks
+        </div>
+
+        <div class="page-header">
+            <h1>OAuth / SSO Advanced Attacks</h1>
+            <p class="subtitle">
+                OAuth 2.0 / OpenID Connectの実装ミスを突くATOテクニック。
+                TikTok ATO $12,000、GitHub SSH cert bypass $10,000 等、高額報告の定番カテゴリ。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-wsa">WSA Labs</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>OAuth 2.0 Flow Recap</h2>
+
+            <h3>Authorization Code Flow (最も一般的)</h3>
+            <div class="flow-diagram">
+User → App:      "Login with Google"
+App → AuthServer: GET /authorize?response_type=code&client_id=X&redirect_uri=Y&scope=Z&state=S
+AuthServer:       User authenticates + consents
+AuthServer → App: 302 redirect_uri?code=ABC&state=S
+App → AuthServer: POST /token { code=ABC, client_secret=SECRET }
+AuthServer → App: { access_token, refresh_token, id_token }
+            </div>
+
+            <h3>Implicit Flow (deprecated but still exists)</h3>
+            <div class="flow-diagram">
+AuthServer → App: 302 redirect_uri#access_token=TOKEN
+                  ↑ Token in URL fragment (never sent to server)
+                  Problem: Still accessible via JS, referer leaks
+            </div>
+
+            <h3>PKCE (Proof Key for Code Exchange)</h3>
+            <pre><code>// Client generates:
+code_verifier = random_string(128)
+code_challenge = BASE64URL(SHA256(code_verifier))
+
+// Authorization request includes:
+&code_challenge=X&code_challenge_method=S256
+
+// Token exchange includes:
+&code_verifier=original_verifier
+// Server verifies: SHA256(code_verifier) == stored challenge</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Attack Vectors</h2>
+
+            <h3>1. Token Theft via Open Redirect</h3>
+            <p>redirect_uriバリデーションの不備を突いてauthorization codeを窃取:</p>
+            <pre><code>// Strict validation:
+redirect_uri=https://app.com/callback  ✓
+redirect_uri=https://evil.com/callback  ✗
+
+// Bypass patterns:
+redirect_uri=https://app.com/callback/../redirect?url=evil.com  (path traversal)
+redirect_uri=https://app.com.evil.com/callback  (subdomain confusion)
+redirect_uri=https://app.com/callback%23@evil.com  (fragment injection)
+redirect_uri=https://app.com/callback?next=//evil.com  (open redirect chain)</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">redirect_uri Bypass テクニック集</div>
+                <ul>
+                    <li><code>/../</code> Path traversal</li>
+                    <li><code>%2f%2f</code> Double encoding</li>
+                    <li><code>@evil.com</code> Userinfo prefix</li>
+                    <li><code>\.evil.com</code> Backslash normalization</li>
+                    <li><code>%00</code> Null byte truncation</li>
+                    <li>Same-domain open redirect → chain</li>
+                    <li>Subdomain wildcard: <code>*.app.com</code> → find XSS on any subdomain</li>
+                </ul>
+            </div>
+
+            <h3>2. CSRF on Authorization Endpoint</h3>
+            <pre><code>// Attack: Link victim's account to attacker's IdP account
+// Attacker starts OAuth flow, gets code, does NOT complete
+// Sends code to victim:
+
+&lt;img src="https://target.com/oauth/callback?code=ATTACKER_CODE&state=..." /&gt;
+
+// If state parameter is not validated:
+// Victim's account is now linked to attacker's Google account
+// Attacker can "Login with Google" → access victim's account</code></pre>
+
+            <h3>3. Scope Escalation</h3>
+            <pre><code>// Original request: scope=read
+// Modify to: scope=read+write+admin
+
+// Some IdPs accept broader scope silently
+// Or: re-consent prompt with added scope isn't shown to user</code></pre>
+
+            <h3>4. Account Linking Abuse</h3>
+            <p>「Connect Google Account」機能で別ユーザのアカウントをリンク:</p>
+            <ul>
+                <li>CSRFでvictimに攻撃者のOAuthアカウントをリンクさせる</li>
+                <li>Email変更 → OAuth再リンクでATOを永続化</li>
+                <li>複数IdP間のemail conflictを悪用 (Apple ID vs Google)</li>
+            </ul>
+
+            <h3>5. IdP Confusion (Provider Merge)</h3>
+            <pre><code>// victim@company.com has account via password
+// Attacker registers victim@company.com on Google (if not verified)
+// Attacker uses "Sign in with Google" on target app
+// App matches email → merges into existing account → ATO
+
+// Key: Does the app verify email ownership from IdP?
+// Does it distinguish accounts by (provider, provider_id) or just email?</code></pre>
+
+            <h3>6. PKCE Downgrade</h3>
+            <pre><code>// If server supports both PKCE and non-PKCE flows:
+// Simply omit code_challenge from authorization request
+// If server doesn't enforce PKCE → code interception is possible again
+
+// Or: code_challenge_method=plain (server accepts plain instead of S256)
+// code_verifier = code_challenge (no hashing → attacker can guess)</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>OIDC-Specific Attacks</h2>
+
+            <h3>ID Token Validation Issues</h3>
+            <ul>
+                <li><strong>Signature not verified</strong>: id_tokenのJWS署名検証がない → 改竄可能</li>
+                <li><strong>Algorithm confusion</strong>: RS256→HS256切り替え (JWT attack)</li>
+                <li><strong>aud claim not checked</strong>: 別appのid_tokenを流用</li>
+                <li><strong>iss claim not checked</strong>: 別IdPのtokenを受理</li>
+            </ul>
+
+            <h3>Nonce Replay</h3>
+            <pre><code>// id_token contains nonce claim to prevent replay
+// If app doesn't verify nonce:
+// Attacker replays stolen id_token → authenticated as victim</code></pre>
+
+            <h3>Issuer Confusion</h3>
+            <pre><code>// App trusts multiple IdPs
+// Attacker's IdP issues token with sub=victim_id
+// App doesn't scope (issuer + sub) → matches victim's account</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Real-World Reports</h2>
+
+            <div class="card">
+                <div class="card-title">TikTok ATO via Account Recovery - #2443228 ($12,000)</div>
+                <p>
+                    TikTokのアカウントリカバリーフローでOAuth tokenが適切にscopeされておらず、
+                    攻撃者がvictimのアカウントを完全に乗っ取り可能。
+                    認証フローの状態管理の欠陥を突いた典型的なOAuth ATO。
+                </p>
+            </div>
+
+            <div class="card">
+                <div class="card-title">GitHub SSH Certificate Bypass - #1901040 ($10,000)</div>
+                <p>
+                    GitHub Enterprise CloudのSSO/OAuth認証フローにおいて、
+                    SSH certificate authenticationでSAMLバリデーションをbypass。
+                    組織メンバーの認証ポリシーを回避してリポジトリアクセスを取得。
+                </p>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Reddit: Apple Sign-In XSS Chain</div>
+                <p>
+                    Apple Sign-InのレスポンスをXSSで窃取し、
+                    Redditアカウントの完全乗っ取りを達成。
+                    OAuth response + XSSのクラシックなchain。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Testing Checklist</h2>
+            <table>
+                <thead>
+                    <tr><th>#</th><th>Test</th><th>What to look for</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>1</td><td>redirect_uri manipulation</td><td>Partial match, open redirect, subdomain wildcard</td></tr>
+                    <tr><td>2</td><td>state parameter</td><td>Missing, predictable, not validated on callback</td></tr>
+                    <tr><td>3</td><td>PKCE enforcement</td><td>Can omit code_challenge entirely</td></tr>
+                    <tr><td>4</td><td>Token scope</td><td>Request broader scope, check if granted</td></tr>
+                    <tr><td>5</td><td>Code reuse</td><td>Use same authorization code twice</td></tr>
+                    <tr><td>6</td><td>ID token validation</td><td>Modify claims, change alg, wrong aud</td></tr>
+                    <tr><td>7</td><td>Account linking CSRF</td><td>Connect attacker's IdP to victim account</td></tr>
+                    <tr><td>8</td><td>Email-based merge</td><td>Same email from different providers</td></tr>
+                    <tr><td>9</td><td>Token in URL</td><td>Check referer header leakage</td></tr>
+                    <tr><td>10</td><td>Implicit flow fallback</td><td>response_type=token still accepted</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>WSA Labs</h2>
+            <div class="card">
+                <div class="card-title">PortSwigger Web Security Academy</div>
+                <ul>
+                    <li><a href="https://portswigger.net/web-security/oauth" target="_blank">OAuth authentication</a></li>
+                    <li>Lab: Authentication bypass via OAuth implicit flow</li>
+                    <li>Lab: Forced OAuth profile linking</li>
+                    <li>Lab: OAuth account hijacking via redirect_uri</li>
+                    <li>Lab: Stealing OAuth access tokens via an open redirect</li>
+                    <li>Lab: SSRF via OpenID dynamic client registration</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="page-nav">
+            <a href="41-race-conditions.html">&larr; Prev: Race Conditions</a>
+            <a href="43-websocket.html">Next: WebSocket Attacks &rarr;</a>
+        </div>
+
+        <div style="margin-top:2rem; text-align:center;">
+            <button class="complete-btn" data-module-id="42-oauth" onclick="toggleComplete('42-oauth')">Mark Complete</button>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

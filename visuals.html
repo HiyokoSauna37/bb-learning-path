@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visual Reference - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="assets/style.css">
+    <style>
+        .mermaid {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            text-align: center;
+            overflow-x: auto;
+        }
+        .mermaid svg { max-width: 100%; }
+        .vis-section { margin-bottom: 3rem; }
+        .vis-section h2 { border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 0.5rem; }
+        .vis-section > p { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem; }
+        .vis-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem; }
+        .vis-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; }
+        .vis-card h4 { margin-bottom: 0.8rem; color: var(--accent); }
+        .toc { background: var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.2rem 1.5rem; margin-bottom:2rem; }
+        .toc a { display:inline-block; margin:0.2rem 0.5rem; font-size:0.85rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="index.html">Top</a> &gt; Visual Reference
+        </div>
+
+        <div class="page-header">
+            <h1>Visual Reference</h1>
+            <p class="subtitle">攻撃フロー、判断ツリー、ワークフローを図解で理解する</p>
+        </div>
+
+        <div class="toc">
+            <strong>Contents:</strong><br>
+            <a href="#bb-workflow">BB Workflow</a>
+            <a href="#vuln-map">Vulnerability Map</a>
+            <a href="#xss-flow">XSS Flow</a>
+            <a href="#ssrf-flow">SSRF Flow</a>
+            <a href="#idor-flow">IDOR Flow</a>
+            <a href="#oauth-flow">OAuth Flow</a>
+            <a href="#csrf-flow">CSRF Flow</a>
+            <a href="#sqli-tree">SQLi Decision Tree</a>
+            <a href="#chain-patterns">Exploit Chains</a>
+            <a href="#submit-tree">Submit Decision Tree</a>
+            <a href="#code-review">Code Review Flow</a>
+            <a href="#incfix-flow">Incomplete Fix Flow</a>
+            <a href="#severity-tree">Severity Decision</a>
+            <a href="#recon-pipeline">Recon Pipeline</a>
+        </div>
+
+        <!-- 1. BB Workflow -->
+        <div class="vis-section" id="bb-workflow">
+            <h2>Bug Bounty Workflow (全体フロー)</h2>
+            <p>BB 調査の全体像。Phase 0 (Triage) → Phase 1 (Hypothesis & PoC) → Phase 2 (Submit)。</p>
+            <div class="mermaid">
+flowchart LR
+    Start([Session Start]) --> P0
+
+    subgraph P0["Phase 0: Triage"]
+        T1[Target選定] --> T2[Program Scope確認]
+        T2 --> T3[Dup Zone確認]
+        T3 --> T4{GO / NOGO?}
+    end
+
+    T4 -->|NOGO| Pivot[別Targetへ Pivot]
+    Pivot --> T1
+    T4 -->|GO| P1
+
+    subgraph P1["Phase 1: Hypothesis & PoC"]
+        H1[Code/Endpoint Audit] --> H2[Hypothesis生成]
+        H2 --> H3[PoC作成 & 検証]
+        H3 --> H4{Verified?}
+    end
+
+    H4 -->|No| H2
+    H4 -->|Yes| P2
+
+    subgraph P2["Phase 2: Submit"]
+        S1[Self-Audit Gate] --> S2[Report Draft]
+        S2 --> S3[CVSS計算]
+        S3 --> S4[Platform Submit]
+    end
+
+    S4 --> Done([Submission Log更新])
+            </div>
+        </div>
+
+        <!-- 2. Vulnerability Map -->
+        <div class="vis-section" id="vuln-map">
+            <h2>Vulnerability Classification Map</h2>
+            <p>Web 脆弱性の全体像。どこに何があるかの地図。</p>
+            <div class="mermaid">
+mindmap
+    root((Web Vulnerabilities))
+        Injection
+            XSS
+                Reflected
+                Stored
+                DOM-based
+            SQLi
+                Union
+                Blind
+                NoSQL
+            Command Injection
+            SSTI
+            XXE
+        Broken Auth
+            JWT Misconfig
+            OAuth Flaws
+            Session Fixation
+            Password Reset
+            2FA Bypass
+        Access Control
+            IDOR
+            Privilege Escalation
+            Force Browsing
+            Missing Middleware
+        SSRF
+            Full Response
+            Blind
+            DNS Rebinding
+            Cloud Metadata
+        Client-Side
+            CSRF
+            Clickjacking
+            Open Redirect
+            CORS Misconfig
+        Logic Flaws
+            Race Condition
+            Price Manipulation
+            Workflow Bypass
+        Advanced
+            Request Smuggling
+            Cache Poisoning
+            Prototype Pollution
+            Deserialization
+            </div>
+        </div>
+
+        <!-- 3. XSS Attack Flow -->
+        <div class="vis-section" id="xss-flow">
+            <h2>XSS 攻撃フロー</h2>
+            <div class="vis-grid">
+                <div class="vis-card">
+                    <h4>Reflected XSS</h4>
+                    <div class="mermaid">
+sequenceDiagram
+    participant A as Attacker
+    participant V as Victim
+    participant S as Server
+
+    A->>V: 悪意あるURLを送信
+    Note over A,V: https://target.com/search?q=&lt;script&gt;...
+    V->>S: URLをクリック
+    S->>V: 入力をそのまま反射したHTML
+    Note over V: ブラウザでscript実行
+    V-->>A: Cookie/Token 窃取
+                    </div>
+                </div>
+                <div class="vis-card">
+                    <h4>Stored XSS</h4>
+                    <div class="mermaid">
+sequenceDiagram
+    participant A as Attacker
+    participant S as Server/DB
+    participant V as Victim
+
+    A->>S: 悪意あるデータを保存
+    Note over A,S: プロフィール名, コメント等
+    S->>S: DBに保存
+    V->>S: ページを閲覧
+    S->>V: 保存済みペイロードを含むHTML
+    Note over V: ブラウザでscript実行
+    V-->>A: ATO / データ窃取
+                    </div>
+                </div>
+            </div>
+
+            <h3 style="margin-top:1.5rem;">XSS コンテキスト判定フロー</h3>
+            <div class="mermaid">
+flowchart TD
+    Start[入力がレスポンスに反射された] --> C1{どこに出力?}
+    C1 -->|HTML body| B1["&lt;script&gt; or &lt;img onerror&gt;"]
+    C1 -->|HTML属性内| B2["&quot; onfocus=alert(1)"]
+    C1 -->|JS文字列内| B3["'; alert(1); //"]
+    C1 -->|URL/href属性| B4["javascript:alert(1)"]
+    C1 -->|CSS内| B5["ほぼ不可能 (現代ブラウザ)"]
+
+    B1 --> F1{フィルター?}
+    F1 -->|なし| XSS([XSS成功])
+    F1 -->|script blocked| B1b["&lt;svg/onload&gt; &lt;details/ontoggle&gt;"]
+    B1b --> XSS
+
+    B2 --> F2{引用符?}
+    F2 -->|あり| B2b["引用符を閉じて breakout"]
+    F2 -->|なし| B2c["スペースで属性追加"]
+    B2b --> XSS
+    B2c --> XSS
+            </div>
+        </div>
+
+        <!-- 4. SSRF Attack Flow -->
+        <div class="vis-section" id="ssrf-flow">
+            <h2>SSRF 攻撃フロー</h2>
+            <div class="mermaid">
+sequenceDiagram
+    participant A as Attacker
+    participant S as Vulnerable Server
+    participant M as Cloud Metadata<br/>(169.254.169.254)
+    participant I as Internal Service
+
+    A->>S: POST /api/fetch-url<br/>url=http://169.254.169.254/...
+    Note over S: URL validation check
+    S->>M: GET /latest/meta-data/iam/...
+    M->>S: IAM Credentials (AccessKey, Secret)
+    S->>A: Response with credentials
+
+    Note over A: 取得した credentials で...
+
+    A->>I: AWS API call (S3, EC2, etc.)
+    Note over A,I: 内部リソースへの<br/>フルアクセス
+            </div>
+
+            <h3 style="margin-top:1.5rem;">SSRF Bypass テクニック判定</h3>
+            <div class="mermaid">
+flowchart TD
+    Start[SSRF Sink発見] --> V1{IP Blocklist?}
+    V1 -->|なし| Direct([直接アクセス])
+    V1 -->|あり| T1{何をブロック?}
+
+    T1 -->|127.0.0.1 文字列| IP["代替表記:<br/>0x7f000001, 2130706433,<br/>[::1], 127.1"]
+    T1 -->|Private IP全般| DNS["DNS Rebinding:<br/>1st=外部IP → 2nd=内部IP"]
+    T1 -->|全内部IP| Redir["Open Redirect経由:<br/>allowed.com → 127.0.0.1"]
+
+    IP --> Check{通った?}
+    DNS --> Check
+    Redir --> Check
+
+    Check -->|Yes| Exploit([Impact 確認])
+    Check -->|No| Proto{Protocol変更?}
+    Proto -->|gopher://| G["Redis/SMTP操作"]
+    Proto -->|file://| F["/etc/passwd 読み取り"]
+    Proto -->|どれも不可| Report["Blind SSRF として報告<br/>(OOB証明)"]
+            </div>
+        </div>
+
+        <!-- 5. IDOR Flow -->
+        <div class="vis-section" id="idor-flow">
+            <h2>IDOR テストフロー</h2>
+            <div class="mermaid">
+flowchart TD
+    Start[2つのアカウントを用意<br/>A=攻撃者, B=被害者] --> S1
+
+    S1[Account Bでリソース作成<br/>→ ID を確認] --> S2
+
+    S2[Account Aのセッションで<br/>BのIDを使ってリクエスト] --> R1{Response?}
+
+    R1 -->|200 + Bのデータ| IDOR([IDOR確定!])
+    R1 -->|403 Forbidden| Safe[Access Control 正常]
+    R1 -->|404 Not Found| Check{IDは正しい?}
+    R1 -->|200 + 空データ| Partial[部分的Access Control<br/>→ 別Methodも試す]
+
+    Check -->|Yes| Safe
+    Check -->|No| Fix[ID形式を確認<br/>UUID? Base64?]
+
+    IDOR --> Sev{Read or Write?}
+    Sev -->|Read only| Med[Medium severity]
+    Sev -->|Write/Delete| High[High severity]
+    Sev -->|ATO chain可能| Crit[Critical severity]
+
+    Partial --> Methods["GET → POST → PUT → DELETE<br/>全Method テスト"]
+    Methods --> R1
+            </div>
+        </div>
+
+        <!-- 6. OAuth Flow -->
+        <div class="vis-section" id="oauth-flow">
+            <h2>OAuth 2.0 Authorization Code Flow</h2>
+            <p>正常フロー (上) と攻撃ポイント (赤) を重ねて表示。</p>
+            <div class="mermaid">
+sequenceDiagram
+    participant U as User (Browser)
+    participant C as Client App
+    participant AS as Auth Server<br/>(Google, GitHub等)
+    participant RS as Resource Server
+
+    U->>C: 1. Login ボタンクリック
+    C->>U: 2. Auth Server へリダイレクト
+    Note right of C: redirect_uri=https://app.com/callback<br/>🔴 Open Redirect で<br/>redirect_uri を攻撃者URLに
+
+    U->>AS: 3. ログイン + 同意
+    AS->>U: 4. Authorization Code 付きリダイレクト
+    Note right of AS: code=abc123<br/>🔴 Code が Referer 漏洩<br/>🔴 CSRF で被害者の code 奪取
+
+    U->>C: 5. callback?code=abc123
+    C->>AS: 6. Code → Token 交換
+    Note right of C: client_secret 使用<br/>🔴 client_secret 漏洩チェック
+
+    AS->>C: 7. Access Token 返却
+    C->>RS: 8. Token で API アクセス
+    RS->>C: 9. ユーザーデータ
+            </div>
+        </div>
+
+        <!-- 7. CSRF Flow -->
+        <div class="vis-section" id="csrf-flow">
+            <h2>CSRF 攻撃フロー</h2>
+            <div class="mermaid">
+sequenceDiagram
+    participant A as Attacker Site
+    participant V as Victim Browser
+    participant T as Target Server
+
+    Note over V: Victim は Target にログイン済み<br/>(Session Cookie保持)
+
+    V->>A: 攻撃者サイトを訪問
+    A->>V: 自動送信フォームを返す
+    Note over A,V: &lt;form action="target.com/transfer"&gt;<br/>&lt;input name="to" value="attacker"&gt;<br/>&lt;input name="amount" value="10000"&gt;
+
+    V->>T: POST /transfer (Cookie自動送信)
+    Note over V,T: 🔴 SameSite=None の場合<br/>Cookie が自動付与される
+
+    T->>T: 正規リクエストとして処理
+    T->>V: 200 OK (送金完了)
+            </div>
+        </div>
+
+        <!-- 8. SQLi Decision Tree -->
+        <div class="vis-section" id="sqli-tree">
+            <h2>SQL Injection 判定ツリー</h2>
+            <div class="mermaid">
+flowchart TD
+    Start["パラメータに ' を入力"] --> R1{Response?}
+
+    R1 -->|500 / DBエラー表示| E1[Error-based SQLi<br/>エラーメッセージからデータ抽出]
+    R1 -->|正常だが結果が変わる| U1{UNION 可能?}
+    R1 -->|変化なし| B1{Time-based テスト}
+
+    U1 -->|ORDER BY でカラム数特定| U2[UNION SELECT で<br/>データ抽出]
+    U1 -->|UNION blocked| B1
+
+    B1 -->|SLEEP(5)で遅延あり| T1[Time-based Blind<br/>1bit ずつ抽出]
+    B1 -->|遅延なし| Bool{Boolean テスト<br/>AND 1=1 vs AND 1=2}
+
+    Bool -->|結果が異なる| Bo1[Boolean Blind<br/>条件分岐でデータ抽出]
+    Bool -->|同じ| NoSQLi[SQLi なし or<br/>別の Injection 型を試す]
+
+    E1 --> Tool[sqlmap で自動化<br/>⚠ 許可確認必須]
+    U2 --> Tool
+    T1 --> Tool
+    Bo1 --> Tool
+            </div>
+        </div>
+
+        <!-- 9. Exploit Chain Patterns -->
+        <div class="vis-section" id="chain-patterns">
+            <h2>Exploit Chain パターン集</h2>
+            <div class="vis-grid">
+                <div class="vis-card">
+                    <h4>XSS → Account Takeover</h4>
+                    <div class="mermaid">
+flowchart LR
+    A[XSS発見<br/>Medium] --> B[Session Cookie<br/>窃取]
+    B --> C[ATO<br/>Critical]
+
+    style A fill:#d29922,color:#000
+    style C fill:#f85149,color:#fff
+                    </div>
+                </div>
+                <div class="vis-card">
+                    <h4>SSRF → Cloud Credential → RCE</h4>
+                    <div class="mermaid">
+flowchart LR
+    A[SSRF<br/>Medium] --> B[Cloud Metadata<br/>Credential取得]
+    B --> C[AWS API<br/>Full Access]
+    C --> D[RCE<br/>Critical]
+
+    style A fill:#d29922,color:#000
+    style D fill:#f85149,color:#fff
+                    </div>
+                </div>
+                <div class="vis-card">
+                    <h4>Open Redirect → OAuth Token Theft</h4>
+                    <div class="mermaid">
+flowchart LR
+    A[Open Redirect<br/>Low] --> B[OAuth redirect_uri<br/>書き換え]
+    B --> C[Token/Code<br/>窃取]
+    C --> D[ATO<br/>High]
+
+    style A fill:#3fb950,color:#000
+    style D fill:#f85149,color:#fff
+                    </div>
+                </div>
+                <div class="vis-card">
+                    <h4>Self-XSS + CSRF → Stored XSS</h4>
+                    <div class="mermaid">
+flowchart LR
+    A[Self-XSS<br/>N/A] --> B[CSRF で<br/>被害者に注入]
+    B --> C[Stored XSS<br/>Medium-High]
+
+    style A fill:#6e7681,color:#fff
+    style C fill:#d29922,color:#000
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 10. Submit Decision Tree -->
+        <div class="vis-section" id="submit-tree">
+            <h2>Submit / Withdraw 判断ツリー</h2>
+            <p>レポート提出前の最終判断フロー。mei-bb の実体験に基づく。</p>
+            <div class="mermaid">
+flowchart TD
+    Start[Finding あり] --> Q1{Runtime で<br/>PoC 再現した?}
+    Q1 -->|No| W1[❌ Withdraw<br/>コード読みだけでは不十分]
+    Q1 -->|Yes| Q2{Vendor の auth doc を<br/>読んだ?}
+
+    Q2 -->|No| Read["auth doc を読む"]
+    Read --> Q2
+    Q2 -->|Yes| Q3{By-feature<br/>= 仕様通り?}
+
+    Q3 -->|Yes| W2["❌ Withdraw<br/>(Pyroscope/immich 事例)"]
+    Q3 -->|No/Unclear| Q4{Cross-OS 検証<br/>した?}
+
+    Q4 -->|Win only| W3["❌ Withdraw<br/>(vercel/ai trailing-dot 事例)"]
+    Q4 -->|Linux でも再現| Q5{Dup Zone?}
+
+    Q5 -->|Known dup zone| W4["❌ Withdraw or<br/>別 sink を探す"]
+    Q5 -->|Clear| Q6{CVSS 計算した?}
+
+    Q6 -->|No| Calc["bb-cvss compute"]
+    Calc --> Q6
+    Q6 -->|Yes| Q7{Severity overclaim<br/>していない?}
+
+    Q7 -->|していない| Submit["✅ Submit!"]
+    Q7 -->|している| Fix["Severity 下方修正"]
+    Fix --> Submit
+
+    style Submit fill:#3fb950,color:#000
+    style W1 fill:#f85149,color:#fff
+    style W2 fill:#f85149,color:#fff
+    style W3 fill:#f85149,color:#fff
+    style W4 fill:#f85149,color:#fff
+            </div>
+        </div>
+
+        <!-- 11. Code Review Flow -->
+        <div class="vis-section" id="code-review">
+            <h2>Code Review フロー (Sink-to-Source)</h2>
+            <div class="mermaid">
+flowchart TD
+    S1["1. Sink を grep で列挙"] --> S2["exec, eval, query,<br/>innerHTML, deserialize..."]
+    S2 --> S3["2. 各 Sink の呼び出し元を追跡"]
+    S3 --> S4{"3. User Input が<br/>Sink に到達する?"}
+
+    S4 -->|No| Safe["✅ Safe<br/>(内部データのみ)"]
+    S4 -->|Yes| S5{"4. Sanitization /<br/>Validation がある?"}
+
+    S5 -->|なし| Vuln["🔴 脆弱性確定!<br/>PoC 作成へ"]
+    S5 -->|あり| S6{"5. Bypass 可能?"}
+
+    S6 -->|Yes| Vuln
+    S6 -->|No| Safe2["✅ Safe<br/>(適切に防御済み)"]
+
+    Vuln --> S7["6. Docker/local で<br/>Runtime verify"]
+    S7 --> S8["7. Report Draft"]
+            </div>
+        </div>
+
+        <!-- 12. Incomplete Fix Flow -->
+        <div class="vis-section" id="incfix-flow">
+            <h2>Incomplete Fix Variant 発見フロー</h2>
+            <div class="mermaid">
+flowchart TD
+    A1["Advisory / CVE を発見"] --> A2["Patch commit を特定<br/>(git log --grep)"]
+    A2 --> A3["Patch diff を読む"]
+    A3 --> A4["パッチが追加した<br/>check/middleware を特定"]
+    A4 --> A5["同じ check が必要だが<br/>適用されていない箇所を grep"]
+
+    A5 --> R{Sibling 発見?}
+    R -->|Yes| V1["Runtime で PoC 検証"]
+    R -->|No| Next["別の Advisory へ"]
+
+    V1 --> V2{"Positive test 成功?<br/>(脆弱性が刺さる)"}
+    V2 -->|Yes| V3["Negative test も実行<br/>(パッチ済み箇所で 403)"]
+    V3 --> Submit["Report 作成 + Submit"]
+    V2 -->|No| Investigate["別レイヤーで防御<br/>されているか確認"]
+
+    style Submit fill:#3fb950,color:#000
+            </div>
+        </div>
+
+        <!-- 13. Severity Decision -->
+        <div class="vis-section" id="severity-tree">
+            <h2>Severity 判定フロー</h2>
+            <div class="mermaid">
+flowchart TD
+    Start[Finding] --> Q1{Remote から<br/>攻撃可能?}
+    Q1 -->|No| Low["Low or Info"]
+    Q1 -->|Yes| Q2{認証不要?}
+
+    Q2 -->|Yes, Unauth| Q3{何ができる?}
+    Q2 -->|Auth required| Q4{何ができる?}
+
+    Q3 -->|RCE / Full DB access| Crit["Critical 9.0+"]
+    Q3 -->|Cross-tenant data read| High["High 7.0-8.9"]
+    Q3 -->|Self data only| Med["Medium 4.0-6.9"]
+
+    Q4 -->|Admin → RCE| High2["High 7.0-8.9"]
+    Q4 -->|User → Other user data| Med2["Medium 4.0-6.9"]
+    Q4 -->|User → Own data only| Low2["Low 2.0-3.9"]
+
+    Crit --> Pre{Precondition<br/>現実的?}
+    High --> Pre
+    High2 --> Pre
+    Med --> Final["Severity 確定"]
+    Med2 --> Final
+    Low --> Final
+    Low2 --> Final
+
+    Pre -->|Yes| Final
+    Pre -->|No, 非現実的| Down["1段階下げる"]
+    Down --> Final
+
+    style Crit fill:#f85149,color:#fff
+    style High fill:#f85149,color:#fff
+    style High2 fill:#f85149,color:#fff
+    style Med fill:#d29922,color:#000
+    style Med2 fill:#d29922,color:#000
+    style Low fill:#3fb950,color:#000
+    style Low2 fill:#3fb950,color:#000
+            </div>
+        </div>
+
+        <!-- 14. Recon Pipeline -->
+        <div class="vis-section" id="recon-pipeline">
+            <h2>Recon 自動化パイプライン</h2>
+            <div class="mermaid">
+flowchart LR
+    subgraph Discovery
+        A[subfinder<br/>Passive DNS] --> B[httpx<br/>Alive Check]
+        A2[amass<br/>CT Logs] --> B
+        A3[crt.sh<br/>Certificate] --> B
+    end
+
+    subgraph Analysis
+        B --> C[ffuf<br/>Directory Brute]
+        B --> D[getJS<br/>JS File抽出]
+        D --> E[LinkFinder<br/>API Endpoint抽出]
+        D --> F[SecretFinder<br/>Key/Token検出]
+    end
+
+    subgraph Testing
+        C --> G[nuclei<br/>Template Scan]
+        E --> G
+        G --> H{Finding?}
+    end
+
+    H -->|Yes| I[手動検証 + PoC]
+    H -->|No| J[Custom Template<br/>作成 or Pivot]
+            </div>
+        </div>
+
+        <div class="page-nav">
+            <a href="index.html">&larr; Top Page</a>
+            <a href="quiz.html">Quiz &rarr;</a>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'dark',
+            themeVariables: {
+                primaryColor: '#1f2a3f',
+                primaryTextColor: '#e6edf3',
+                primaryBorderColor: '#30363d',
+                lineColor: '#58a6ff',
+                secondaryColor: '#161b22',
+                tertiaryColor: '#161b22',
+                fontFamily: '-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif',
+                fontSize: '14px'
+            },
+            flowchart: { curve: 'basis', padding: 15 },
+            sequence: { mirrorActors: false }
+        });
+    </script>
+</body>
+</html>

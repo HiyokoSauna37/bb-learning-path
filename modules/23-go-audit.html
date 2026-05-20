@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go Security Patterns - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 2: Source Code Audit &gt; Go Security Patterns
+        </div>
+
+        <div class="page-header">
+            <h1>Go Security Patterns</h1>
+            <p class="subtitle">
+                Go 言語特有のセキュリティ問題。net/http routing, filepath.Join, Race Condition, Template Injection, SSRF パターンを網羅。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>net/http Routing Issues</h2>
+
+            <h3>Trailing Slash の罠</h3>
+<pre><code>// Go 1.22 以前の ServeMux
+http.HandleFunc("/admin", adminHandler)
+// /admin → match
+// /admin/ → match (trailing slash redirect)
+// /admin/../../etc/passwd → depends on implementation
+
+// 問題: "/admin" と "/admin/" は別 pattern
+// auth middleware が片方にしか適用されていない場合に bypass</code></pre>
+
+            <h3>path.Clean Bypass</h3>
+<pre><code>import "path"
+
+// path.Clean は URL path を正規化するが...
+clean := path.Clean(userInput)
+// path.Clean("/../admin") → "/admin"
+// path.Clean("/./admin") → "/admin"
+
+// 問題: router の pattern match と Clean の順序
+// router が先に match → Clean される前に routing 決定 → bypass</code></pre>
+
+            <h3>Go 1.22+ の新 ServeMux</h3>
+<pre><code>// Go 1.22 で method-based routing が追加
+mux.HandleFunc("GET /api/users/{id}", getUser)
+mux.HandleFunc("POST /api/users", createUser)
+
+// 注意: {id} の wildcard が "../" を含む場合の処理
+// 注意: method ベースの middleware 適用漏れ</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>filepath.Join on User Input</h2>
+            <p>Go の <code>filepath.Join</code> は <code>..</code> を解決するが、absolute path に対する挙動が Python の <code>os.path.join</code> とは異なる。</p>
+
+<pre><code>import "path/filepath"
+
+// filepath.Join は ".." を解決する
+filepath.Join("/base", "../etc/passwd")
+// → "/etc/passwd" (traversal!)
+
+// filepath.Join は absolute path で上書きしない (Python と異なる)
+filepath.Join("/base", "/etc/passwd")
+// → "/base/etc/passwd" (安全)
+
+// 危険パターン:
+func serveFile(w http.ResponseWriter, r *http.Request) {
+    filename := r.URL.Query().Get("file")
+    path := filepath.Join("/app/uploads", filename)
+    http.ServeFile(w, r, path)
+    // filename = "../../etc/passwd" → "/etc/passwd"
+}</code></pre>
+
+            <h3>対策確認ポイント</h3>
+<pre><code>// 安全: filepath.Clean + prefix check
+path := filepath.Join(baseDir, filename)
+path = filepath.Clean(path)
+if !strings.HasPrefix(path, baseDir) {
+    http.Error(w, "forbidden", 403)
+    return
+}</code></pre>
+
+            <h3>grep パターン</h3>
+<pre><code>rg -n "filepath\.Join\(.*r\.|filepath\.Join\(.*req\." --type go
+rg -n "os\.Open\(.*r\.|ioutil\.ReadFile\(.*r\." --type go
+rg -n "http\.ServeFile\(" --type go</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Race Conditions (Goroutine Safety)</h2>
+            <p>Go の goroutine は軽量だが、shared state へのconcurrent access は race condition を生む。</p>
+
+<pre><code>// TOCTOU (Time Of Check to Time Of Use)
+func transferMoney(from, to *Account, amount int) {
+    if from.Balance >= amount {  // CHECK
+        // 別の goroutine がここで from.Balance を変更可能
+        from.Balance -= amount   // USE
+        to.Balance += amount
+    }
+}
+
+// 問題: mutex なし / channel なしで shared state 変更
+// double-spend, race condition による認証バイパス等</code></pre>
+
+            <h3>Detection</h3>
+<pre><code># Go race detector で動的検出
+go test -race ./...
+go run -race main.go
+
+# 静的検出 (grep)
+rg -n "go func\(" --type go  # goroutine 起動箇所
+rg -n "sync\.(Mutex|RWMutex)" --type go  # 排他制御の有無
+rg -n "map\[" --type go  # concurrent map access (panic する)</code></pre>
+
+            <div class="callout warning">
+                <div class="callout-title">Race Condition の PoC</div>
+                <p>Race condition は非決定的。PoC では <code>-race</code> flag での検出 + concurrent request (e.g., 100 goroutine 同時) で再現性を示す。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Template Injection</h2>
+
+            <h3>html/template vs text/template</h3>
+<pre><code>import (
+    "html/template"  // auto-escaping あり
+    "text/template"  // auto-escaping なし!
+)
+
+// 危険: text/template でユーザ入力をレンダリング
+tmpl, _ := template.New("t").Parse(userInput)
+tmpl.Execute(w, data)  // SSTI!
+
+// html/template でも危険なケース:
+// template.HTML() で明示的にエスケープを無効化
+data := template.HTML(userInput)  // XSS!</code></pre>
+
+            <h3>text/template RCE</h3>
+<pre><code>// Go template action で利用可能な関数に依存
+// default では限定的だが、FuncMap で追加される関数に注意
+tmpl := template.New("t").Funcs(template.FuncMap{
+    "exec": func(cmd string) string {
+        out, _ := exec.Command("sh", "-c", cmd).Output()
+        return string(out)
+    },
+})
+// {{exec "id"}} → RCE</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>HTTP Client SSRF</h2>
+            <p>Go の <code>http.Client</code> はデフォルトで redirect を follow する (最大10回)。</p>
+
+<pre><code>// 危険: ユーザ指定 URL に HTTP request
+resp, err := http.Get(userURL)  // redirect follow!
+
+// Redirect で internal service にアクセス:
+// userURL = "http://evil.com" → 302 → "http://169.254.169.254/..."
+
+// 対策: CheckRedirect で redirect を制限
+client := &http.Client{
+    CheckRedirect: func(req *http.Request, via []*http.Request) error {
+        if req.URL.Hostname() == "169.254.169.254" {
+            return errors.New("blocked")
+        }
+        return nil
+    },
+}</code></pre>
+
+            <h3>grep パターン</h3>
+<pre><code>rg -n "http\.(Get|Post|Do)\(.*r\." --type go
+rg -n "http\.NewRequest\(.*r\." --type go
+rg -n "CheckRedirect" --type go  # 対策の有無</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Crypto Misuse</h2>
+
+<pre><code>import (
+    "math/rand"    // 予測可能! セキュリティ用途に使ってはいけない
+    "crypto/rand"  // CSPRNG (安全)
+)
+
+// 危険: math/rand で token 生成
+token := fmt.Sprintf("%d", rand.Int63())  // 予測可能
+
+// 安全: crypto/rand
+b := make([]byte, 32)
+crypto_rand.Read(b)
+token := hex.EncodeToString(b)</code></pre>
+
+            <h3>grep パターン</h3>
+<pre><code>rg -n "math/rand" --type go  # security context で使われていないか
+rg -n "rand\.(Int|Intn|Read)\(" --type go  # import 元を確認
+rg -n "md5\.|sha1\." --type go  # 弱いハッシュ (password に使用?)</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Real Cases</h2>
+
+            <h3>GitLab (Go-based services)</h3>
+            <div class="card">
+                <p>GitLab の多くのマイクロサービス (Workhorse, Container Registry, Pages) は Go 製。</p>
+                <ul>
+                    <li>Workhorse: Pre-auth file upload handling, path traversal</li>
+                    <li>Container Registry: Auth token validation, SSRF in manifest fetch</li>
+                    <li>Pages: Domain routing, TLS cert handling</li>
+                </ul>
+            </div>
+
+            <h3>Grafana / Loki / Pyroscope</h3>
+            <div class="card">
+                <p>Grafana エコシステムは Go 製 OSS の宝庫。middleware pattern が共通。</p>
+                <ul>
+                    <li>Auth middleware のチェーン構造が全プロダクトで類似</li>
+                    <li><code>bb-middleware-audit</code> で middleware 適用漏れを検出可能</li>
+                    <li>Pyroscope: <code>/api/</code> prefix なしの route に auth 漏れ (過去事例)</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>filepath.Join</strong>: <code>..</code> を解決する → path traversal の直接的な sink</li>
+                    <li><strong>net/http routing</strong>: trailing slash / path.Clean の適用タイミングに注意</li>
+                    <li><strong>Race condition</strong>: <code>go func()</code> + shared state + no mutex = race。<code>-race</code> flag で検出</li>
+                    <li><strong>text/template</strong>: auto-escape なし。<code>html/template</code> と間違えると SSTI/XSS</li>
+                    <li><strong>math/rand</strong>: 予測可能。token/secret 生成で使われていたら即報告</li>
+                    <li>Go の型安全性は多くの injection を防ぐが、<strong>string 型の操作</strong>は依然として危険</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="23-go" onclick="toggleComplete('23-go')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="22-python-audit.html">&larr; 前: Python Audit</a>
+            <a href="24-auth-middleware.html">次: Auth Middleware &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

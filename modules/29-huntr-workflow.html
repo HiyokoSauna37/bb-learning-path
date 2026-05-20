@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>huntr Submission Workflow - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .flow-step { display:flex; align-items:flex-start; gap:1rem; margin-bottom:1.2rem; }
+        .flow-num { min-width:2rem; height:2rem; background:var(--accent); color:#000; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:0.85rem; }
+        .flow-body { flex:1; }
+        .flow-body strong { display:block; margin-bottom:0.2rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 2: Source Code Audit &gt; huntr Submission Workflow
+        </div>
+
+        <div class="page-header">
+            <h1>huntr Submission Workflow</h1>
+            <p class="subtitle">
+                huntr.com での OSS 脆弱性報告の全フロー。Target 選定から Report 作成、Triage、Bounty 受領まで。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>huntr.com とは</h2>
+            <ul>
+                <li><strong>OSS 特化</strong>の bug bounty プラットフォーム</li>
+                <li>GitHub リポジトリを直接対象として脆弱性を報告</li>
+                <li>報告は maintainer + huntr triage team が review</li>
+                <li>Accepted されると CVE が発行され、bounty が支払われる</li>
+                <li>Bounty 金額: Critical $1,280 / High $512 / Medium $128 / Low $64 (目安)</li>
+            </ul>
+
+            <div class="callout">
+                <div class="callout-title">huntr の特徴</div>
+                <p>Web アプリ BB (HackerOne/Bugcrowd) と異なり、ソースコードが完全公開されている。whitebox code review スキルが直結する。初心者が最初に取り組むべきプラットフォーム。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Target 選定</h2>
+
+            <h3>良いターゲットの条件</h3>
+            <table>
+                <thead><tr><th>条件</th><th>理由</th></tr></thead>
+                <tbody>
+                    <tr><td>Stars 1K-50K</td><td>active maintenance + bounty 対象の可能性高い</td></tr>
+                    <tr><td>Express/Flask/FastAPI ベース</td><td>Web 脆弱性の典型パターンが適用可能</td></tr>
+                    <tr><td>最近のcommit</td><td>Active project = triage が早い</td></tr>
+                    <tr><td>Auth/API がある</td><td>Auth bypass, IDOR, Injection の attack surface</td></tr>
+                    <tr><td>dependency が多い</td><td>supply chain / vulnerable dep の可能性</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Target 発見方法</h3>
+            <ul>
+                <li><strong>GitHub Trending</strong>: 新規 popular project は audit が少ない</li>
+                <li><strong>既存 Advisory</strong>: GHSA がある project は incomplete fix variant の宝庫</li>
+                <li><strong>huntr leaderboard</strong>: 他の hunter が報告した project を確認 (sibling あり)</li>
+                <li><strong>Dependency-heavy projects</strong>: LLM ツール (LiteLLM, AnythingLLM, Flowise 等)</li>
+            </ul>
+
+            <div class="callout warning">
+                <div class="callout-title">Phase 0.0: bb-target-precheck</div>
+                <p>Target 選定後、<code>bb-target-precheck</code> で huntr 登録状況・過去 advisory・dup zone を確認する。Phase 0.5 の OOS pre-audit も必須。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Submission フロー</h2>
+
+            <div class="flow-step">
+                <div class="flow-num">1</div>
+                <div class="flow-body">
+                    <strong>脆弱性の発見と PoC 確認</strong>
+                    <p>コードレビューで sink を特定 → source からの到達確認 → Docker/local で PoC 確認。positive test + negative test の両方。</p>
+                </div>
+            </div>
+
+            <div class="flow-step">
+                <div class="flow-num">2</div>
+                <div class="flow-body">
+                    <strong>Dup Check</strong>
+                    <p><code>bb-ghsa list</code> で既存 advisory 確認。GitHub Issues/PR も検索。同じ vulnerability が既に報告/修正されていないか。</p>
+                </div>
+            </div>
+
+            <div class="flow-step">
+                <div class="flow-num">3</div>
+                <div class="flow-body">
+                    <strong>Report 作成 (単一ファイル)</strong>
+                    <p>huntr 形式で Description / Impact / Occurrences を 1 ファイルに作成。</p>
+                </div>
+            </div>
+
+            <div class="flow-step">
+                <div class="flow-num">4</div>
+                <div class="flow-body">
+                    <strong>CVSS 計算</strong>
+                    <p><code>bb-cvss compute</code> で正確に算出。暗算禁止。</p>
+                </div>
+            </div>
+
+            <div class="flow-step">
+                <div class="flow-num">5</div>
+                <div class="flow-body">
+                    <strong>Submit</strong>
+                    <p>URL: <code>https://huntr.com/bounties/disclose</code> (一般 form)。</p>
+                </div>
+            </div>
+
+            <div class="flow-step">
+                <div class="flow-num">6</div>
+                <div class="flow-body">
+                    <strong>Triage 待ち</strong>
+                    <p>通常 1-4 週間。maintainer + huntr team が review。追加質問が来る場合あり。</p>
+                </div>
+            </div>
+
+            <div class="flow-step">
+                <div class="flow-num">7</div>
+                <div class="flow-body">
+                    <strong>Accept / Reject / Duplicate</strong>
+                    <p>Accept → CVE 発行 → Bounty 支払い。Duplicate → Signal には影響なし。</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Report Format (huntr)</h2>
+            <p>huntr は<strong>単一ファイル</strong>でレポートを提出。フォームの各フィールドに対応するセクションを1ファイルに記述。</p>
+
+<pre><code>## Description
+
+[脆弱性の技術的説明。何が起きているか、なぜ危険か。
+コードの該当箇所を引用。ファイル名とLine番号を明記。]
+
+## Proof of Concept
+
+[再現手順。curl コマンドまたは Python script。
+前提条件 (アカウント作成等) も含める。]
+
+```bash
+# Step 1: Create attacker account
+curl -X POST http://localhost:3000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"attacker","password":"pass123"}'
+
+# Step 2: Exploit
+curl -X GET http://localhost:3000/api/admin/users \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Impact
+
+[CIA triad への影響。攻撃者が何をできるか。
+影響を受けるユーザー/データの範囲。]
+
+## Occurrences
+
+[脆弱性が存在するファイルと行番号のリスト。
+複数箇所ある場合は全て列挙。]
+
+- https://github.com/owner/repo/blob/main/routes/admin.js#L42
+- https://github.com/owner/repo/blob/main/routes/admin.js#L67</code></pre>
+
+            <div class="callout warning">
+                <div class="callout-title">Report Quality Tips</div>
+                <ul>
+                    <li>PoC は<strong>コピペで再現できる</strong>レベルの具体性</li>
+                    <li>impact は<strong>具体的なシナリオ</strong>で示す (「全ユーザーのPIIが漏洩」等)</li>
+                    <li>code reference は GitHub permalink (commit SHA 付き) を使用</li>
+                    <li>severity claim に先例 (同 project の prior GHSA) を citation する</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>CVSS Scoring ガイダンス</h2>
+            <table>
+                <thead><tr><th>Vector</th><th>判断基準</th></tr></thead>
+                <tbody>
+                    <tr><td>Attack Vector (AV)</td><td>Network (ほぼ全て Web)</td></tr>
+                    <tr><td>Attack Complexity (AC)</td><td>Low = 単純なHTTP request。High = race condition/timing依存</td></tr>
+                    <tr><td>Privileges Required (PR)</td><td>None = 無認証。Low = 通常ユーザー。High = admin</td></tr>
+                    <tr><td>User Interaction (UI)</td><td>None = 攻撃者単独。Required = 被害者のクリック等が必要</td></tr>
+                    <tr><td>Scope (S)</td><td>Changed = 別コンポーネントに影響 (SSRF→internal等)</td></tr>
+                    <tr><td>CIA Impact</td><td>High = 全データ漏洩/変更/DoS。Low = 一部のみ</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout">
+                <div class="callout-title">CVSS 計算は必ずツールで</div>
+                <p><code>bb-cvss compute</code> を使用。暗算は誤りの元。severity claim に同 program の prior advisory を citation するとtriage が早い。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>PoC 要件</h2>
+            <ul>
+                <li><strong>実 runtime で確認</strong>: Docker image (latest tag) or git clone + build で再現</li>
+                <li><strong>Positive test</strong>: 脆弱性が刺さる (期待通りの exploit 結果)</li>
+                <li><strong>Negative test</strong>: 正規のアクセスが制限される (auth が効いている箇所のデモ)</li>
+                <li><strong>Minimal</strong>: 最小限の手順で再現。不要な手順は削除</li>
+                <li><strong>Sink で actual exploit demo</strong>: raw forward 確認だけでは不十分。最終的な impact を示す</li>
+            </ul>
+
+            <div class="callout danger">
+                <div class="callout-title">PoC なしの Report は Reject される</div>
+                <p>「コードを見ればわかる」は通用しない。必ず実行可能な PoC を添付すること。再現不可 = Reject。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Triage Process & Timeline</h2>
+            <table>
+                <thead><tr><th>段階</th><th>期間</th><th>内容</th></tr></thead>
+                <tbody>
+                    <tr><td>Initial Review</td><td>1-7 days</td><td>huntr team が基本的な妥当性を確認</td></tr>
+                    <tr><td>Maintainer Review</td><td>1-4 weeks</td><td>OSS maintainer が確認・質問</td></tr>
+                    <tr><td>Fix Development</td><td>varies</td><td>Maintainer が修正を開発</td></tr>
+                    <tr><td>CVE Assignment</td><td>after fix</td><td>CVE ID が割り当てられる</td></tr>
+                    <tr><td>Bounty Payment</td><td>after CVE</td><td>severity に応じた金額が支払われる</td></tr>
+                </tbody>
+            </table>
+
+            <h3>よくある結果</h3>
+            <ul>
+                <li><strong>Accepted</strong>: CVE 発行 + Bounty。Signal +7</li>
+                <li><strong>Duplicate</strong>: 既に報告済み。Signal 計算から除外 (プラスもマイナスもなし)。HackerOne では Reputation に early +2 / late -5 の別計算あり</li>
+                <li><strong>Informative</strong>: 脆弱性だが severity 不十分。Signal +2</li>
+                <li><strong>Not Applicable</strong>: 脆弱性ではない。Signal -5</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>mei-bb Experience</h2>
+            <div class="card">
+                <p>以下のプロジェクトに対して報告実績がある:</p>
+                <table>
+                    <thead><tr><th>Target</th><th>Vuln Type</th><th>Result</th></tr></thead>
+                    <tbody>
+                        <tr><td>LiteLLM</td><td>Cross-tenant info disclosure (/spend/*)</td><td>Verified PoC</td></tr>
+                        <tr><td>AnythingLLM</td><td>Missing middleware (IDOR)</td><td>huntr submitted</td></tr>
+                        <tr><td>lobe-chat</td><td>checkAuth missing (tts/stt)</td><td>GHSA submitted</td></tr>
+                        <tr><td>wger</td><td>Incomplete fix (is_same_gym)</td><td>GHSA submitted</td></tr>
+                        <tr><td>Flowise</td><td>WHITELIST_URLS bypass (6+ siblings)</td><td>High severity</td></tr>
+                        <tr><td>LibreChat</td><td>Method-specific middleware gap</td><td>huntr submitted</td></tr>
+                    </tbody>
+                </table>
+                <p><strong>共通点</strong>: 全て whitebox code review + incomplete fix / middleware audit pattern で発見。Sink-to-source + middleware grep が主要手法。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Submit 前の最終チェックリスト</h2>
+            <ol>
+                <li>Dup check 完了? (<code>bb-ghsa list</code> + GitHub Issues/PR 検索)</li>
+                <li>PoC が実 runtime で再現済み?</li>
+                <li>Negative test 実施済み? (正規アクセスが制限されることの確認)</li>
+                <li>CVSS を <code>bb-cvss compute</code> で計算済み?</li>
+                <li>Report が huntr 形式 (1ファイル) で記述されている?</li>
+                <li>Occurrences に GitHub permalink が含まれている?</li>
+                <li>AI slop check 実施? (bb-aislop-gate scan)</li>
+                <li>trust model / env fidelity 4軸 audit 完了?</li>
+            </ol>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>huntr は OSS whitebox BB の入門に最適</strong> — ソースコード完全公開、code review 直結</li>
+                    <li><strong>Target 選定</strong>: Stars 1K-50K + Express/Flask + recent commit + 既存 GHSA あり</li>
+                    <li><strong>Report は 1 ファイル</strong>: Description + PoC + Impact + Occurrences</li>
+                    <li><strong>PoC 必須</strong>: 実 runtime で positive + negative test</li>
+                    <li><strong>Submission URL</strong>: <code>https://huntr.com/bounties/disclose</code></li>
+                    <li><strong>Dup check</strong>: advisory + PR + issues の 3 軸で確認</li>
+                    <li><strong>Incomplete fix variant</strong> が最も高 ROI の discovery method</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="29-huntr" onclick="toggleComplete('29-huntr')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="28-practice-whitebox.html">&larr; 前: Practice: bb-whitebox-01</a>
+            <a href="30-recon-subdomain.html">次: Recon: Subdomain &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

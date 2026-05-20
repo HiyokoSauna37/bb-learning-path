@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>30-Day Learning Timeline - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="assets/style.css">
+    <style>
+        .week { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 2rem; overflow: hidden; }
+        .week-header { padding: 1.2rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .week-header h3 { font-size: 1.1rem; }
+        .week-header .goal { font-size: 0.85rem; color: var(--text-muted); }
+        .week-body { padding: 1.5rem; }
+        .day { display: grid; grid-template-columns: 60px 1fr; gap: 1rem; margin-bottom: 1.2rem; padding-bottom: 1.2rem; border-bottom: 1px solid var(--border); }
+        .day:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+        .day-num { font-weight: 700; color: var(--accent); font-size: 1.1rem; }
+        .day-time { font-size: 0.75rem; color: var(--text-muted); }
+        .day-content h4 { font-size: 0.95rem; margin-bottom: 0.3rem; }
+        .day-content p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem; }
+        .day-content .modules { font-size: 0.8rem; }
+        .day-content .modules a { margin-right: 0.5rem; }
+        .milestone { background: var(--green-dim); border: 1px solid var(--green); border-radius: 8px; padding: 1rem 1.2rem; margin: 1.5rem 0; }
+        .milestone h4 { color: var(--green); margin-bottom: 0.3rem; }
+        .milestone p { font-size: 0.88rem; color: var(--text-muted); }
+        .prereq { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; margin-bottom: 2rem; }
+        .prereq h3 { margin-bottom: 0.5rem; }
+        .prereq ul { font-size: 0.9rem; color: var(--text-muted); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="index.html">Top</a> &gt; 30-Day Timeline
+        </div>
+
+        <div class="page-header">
+            <h1>30-Day Learning Timeline</h1>
+            <p class="subtitle">
+                毎日1-2時間で30日後には最初のレポートを書ける状態を目指す。
+                週ごとにマイルストーンを設定。焦らず1つずつ。
+            </p>
+        </div>
+
+        <div class="prereq">
+            <h3>開始前に準備するもの</h3>
+            <ul>
+                <li>PC (Windows/Mac/Linux どれでもOK)</li>
+                <li>ブラウザ (Firefox 推奨 — Burp との相性が良い)</li>
+                <li>基本的なプログラミング知識 (変数, ループ, 関数が分かるレベル)</li>
+                <li>英語の技術文書を読む意欲 (翻訳ツール併用OK)</li>
+                <li>1日 1〜2時間の学習時間</li>
+            </ul>
+        </div>
+
+        <!-- Week 1 -->
+        <div class="week">
+            <div class="week-header">
+                <h3>Week 1: 土台を作る</h3>
+                <span class="goal">Goal: HTTP/ブラウザの仕組みを理解 + ツール環境構築</span>
+            </div>
+            <div class="week-body">
+                <div class="day">
+                    <div><div class="day-num">Day 1</div><div class="day-time">~1.5h</div></div>
+                    <div class="day-content">
+                        <h4>HTTP の基礎を理解する</h4>
+                        <p>Request/Response 構造、Headers、Status Codes を学ぶ。用語集を頭に入れる。</p>
+                        <div class="modules"><a href="modules/00-http-fundamentals.html">Module 00</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 2</div><div class="day-time">~1.5h</div></div>
+                    <div class="day-content">
+                        <h4>Browser Security Model</h4>
+                        <p>SOP, CORS, Cookie 属性, CSP の概要を理解する。完璧に暗記する必要はない。</p>
+                        <div class="modules"><a href="modules/01-browser-security.html">Module 01</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 3</div><div class="day-time">~1.5h</div></div>
+                    <div class="day-content">
+                        <h4>認証メカニズム</h4>
+                        <p>Session, JWT, OAuth の仕組み。jwt.io で実際にトークンをデコードしてみる。</p>
+                        <div class="modules"><a href="modules/02-authentication.html">Module 02</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 4</div><div class="day-time">~1h</div></div>
+                    <div class="day-content">
+                        <h4>Encoding & 暗号基礎</h4>
+                        <p>URL encoding, Base64 を手動でやってみる。暗号は概要だけでOK。</p>
+                        <div class="modules"><a href="modules/03-encoding.html">Module 03</a> <a href="modules/04-crypto-basics.html">Module 04</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 5</div><div class="day-time">~2h</div></div>
+                    <div class="day-content">
+                        <h4>ツールセットアップ</h4>
+                        <p>Burp Suite Community をインストール。ブラウザの Proxy 設定。curl でリクエスト送信。実際に手を動かす日。</p>
+                        <div class="modules"><a href="modules/05-tools-setup.html">Module 05</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 6</div><div class="day-time">~1h</div></div>
+                    <div class="day-content">
+                        <h4>ネットワーク基礎 + Quiz</h4>
+                        <p>DNS, TCP の基本を確認。Phase 0 の Quiz で理解度チェック。</p>
+                        <div class="modules"><a href="modules/06-linux-networking.html">Module 06</a> <a href="quiz.html">Quiz</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 7</div><div class="day-time">~1h</div></div>
+                    <div class="day-content">
+                        <h4>復習 + WSA アカウント作成</h4>
+                        <p>Week 1 の内容を軽く見直す。PortSwigger Web Security Academy の無料アカウントを作成。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="milestone">
+            <h4>Milestone 1: 「HTTP通信を見て理解できる」</h4>
+            <p>Burp で任意のサイトの通信を傍受し、Request/Response の各部分が何を意味するか説明できる状態。</p>
+        </div>
+
+        <!-- Week 2 -->
+        <div class="week">
+            <div class="week-header">
+                <h3>Week 2: 脆弱性クラスを知る</h3>
+                <span class="goal">Goal: XSS, SQLi, SSRF, IDOR を理解 + WSA Lab 各2つクリア</span>
+            </div>
+            <div class="week-body">
+                <div class="day">
+                    <div><div class="day-num">Day 8-9</div><div class="day-time">~2h/day</div></div>
+                    <div class="day-content">
+                        <h4>XSS を理解 + Lab 2つ</h4>
+                        <p>原理を学び、Reflected XSS の Apprentice Lab を2つクリア。alert(1) を出す。</p>
+                        <div class="modules"><a href="modules/10-xss.html">Module 10</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 10-11</div><div class="day-time">~2h/day</div></div>
+                    <div class="day-content">
+                        <h4>SQL Injection + Lab 2つ</h4>
+                        <p>UNION-based と Boolean Blind を学ぶ。Apprentice Lab を2つクリア。</p>
+                        <div class="modules"><a href="modules/11-sqli.html">Module 11</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 12</div><div class="day-time">~2h</div></div>
+                    <div class="day-content">
+                        <h4>SSRF + Lab 1つ</h4>
+                        <p>原理を理解し、Basic SSRF の Lab を1つクリア。</p>
+                        <div class="modules"><a href="modules/12-ssrf.html">Module 12</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 13</div><div class="day-time">~1.5h</div></div>
+                    <div class="day-content">
+                        <h4>IDOR + Access Control Lab 1つ</h4>
+                        <p>IDOR は最も見つけやすい脆弱性。Lab で ID を書き換える体験をする。</p>
+                        <div class="modules"><a href="modules/13-idor.html">Module 13</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 14</div><div class="day-time">~1.5h</div></div>
+                    <div class="day-content">
+                        <h4>残りの脆弱性クラス概要 + Quiz</h4>
+                        <p>CSRF, File Upload, XXE, SSTI, Business Logic の概要を流し読み。Quiz で確認。</p>
+                        <div class="modules"><a href="modules/15-csrf.html">Module 15-19</a> <a href="quiz.html">Quiz</a></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="milestone">
+            <h4>Milestone 2: 「脆弱性が見つかったら何が起こるか説明できる」</h4>
+            <p>XSS, SQLi, SSRF, IDOR の4つについて「攻撃者は何ができるか」を日本語で説明できる。WSA Lab を合計6つ以上クリア。</p>
+        </div>
+
+        <!-- Week 3 -->
+        <div class="week">
+            <div class="week-header">
+                <h3>Week 3: コードレビューの実践</h3>
+                <span class="goal">Goal: OSS のコードを読んで脆弱性を見つけられる</span>
+            </div>
+            <div class="week-body">
+                <div class="day">
+                    <div><div class="day-num">Day 15</div><div class="day-time">~1.5h</div></div>
+                    <div class="day-content">
+                        <h4>Code Review Methodology</h4>
+                        <p>Sink-to-Source アプローチを学ぶ。grep パターンを確認。</p>
+                        <div class="modules"><a href="modules/20-code-review-method.html">Module 20</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 16-17</div><div class="day-time">~1.5h/day</div></div>
+                    <div class="day-content">
+                        <h4>Node.js / Express + Auth Middleware</h4>
+                        <p>Express の脆弱パターンと Auth Middleware bypass の手法を学ぶ。</p>
+                        <div class="modules"><a href="modules/21-nodejs-audit.html">Module 21</a> <a href="modules/24-auth-middleware.html">Module 24</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 18-19</div><div class="day-time">~2h/day</div></div>
+                    <div class="day-content">
+                        <h4>bb-whitebox-01 演習 (前半)</h4>
+                        <p>practice/bb-whitebox-01 で実際にコードレビュー。admin.js, tasks.js, webhooks.js を攻略。</p>
+                        <div class="modules"><a href="modules/28-practice-whitebox.html">Module 28</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 20</div><div class="day-time">~2h</div></div>
+                    <div class="day-content">
+                        <h4>bb-whitebox-01 演習 (後半) + レポート練習</h4>
+                        <p>残りの route を攻略。見つけた脆弱性を1つ選んで huntr 形式でレポートを書いてみる。</p>
+                        <div class="modules"><a href="modules/28-practice-whitebox.html">Module 28</a> <a href="modules/50-report-writing.html">Module 50</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 21</div><div class="day-time">~1.5h</div></div>
+                    <div class="day-content">
+                        <h4>Incomplete Fix + huntr ワークフロー</h4>
+                        <p>Advisory の読み方、patch diff の分析、huntr への提出フローを学ぶ。</p>
+                        <div class="modules"><a href="modules/25-incomplete-fix.html">Module 25</a> <a href="modules/29-huntr-workflow.html">Module 29</a></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="milestone">
+            <h4>Milestone 3: 「OSS のコードを grep して脆弱性を見つけられる」</h4>
+            <p>bb-whitebox-01 で 5 個以上の脆弱性を発見し、1 つ以上を huntr 形式でレポートに書ける。ここまで来たら huntr で実際の target を見始められる。</p>
+        </div>
+
+        <!-- Week 4 -->
+        <div class="week">
+            <div class="week-header">
+                <h3>Week 4: 実戦準備</h3>
+                <span class="goal">Goal: huntr で最初の target を選び、調査を開始する</span>
+            </div>
+            <div class="week-body">
+                <div class="day">
+                    <div><div class="day-num">Day 22</div><div class="day-time">~1h</div></div>
+                    <div class="day-content">
+                        <h4>Severity & CVSS + Dup Avoidance</h4>
+                        <p>レポートの severity 設定方法と、duplicate を避ける戦略を学ぶ。</p>
+                        <div class="modules"><a href="modules/51-severity-cvss.html">Module 51</a> <a href="modules/52-dup-avoidance.html">Module 52</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 23</div><div class="day-time">~1h</div></div>
+                    <div class="day-content">
+                        <h4>Platform Operations + AI Slop 回避</h4>
+                        <p>各プラットフォームの特性と、AI ツール使用時の品質担保を学ぶ。</p>
+                        <div class="modules"><a href="modules/53-platform-ops.html">Module 53</a> <a href="modules/54-ai-slop.html">Module 54</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 24</div><div class="day-time">~1h</div></div>
+                    <div class="day-content">
+                        <h4>Mindset + Lessons Learned</h4>
+                        <p>持続可能なハンティングの心構え。先人の失敗から学ぶ。</p>
+                        <div class="modules"><a href="modules/59-mindset.html">Module 59</a> <a href="modules/57-lessons-learned.html">Module 57</a></div>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 25-26</div><div class="day-time">~2h/day</div></div>
+                    <div class="day-content">
+                        <h4>huntr で Target 選定 + 調査開始</h4>
+                        <p>huntr.com で target を選ぶ。GitHub Stars 1K-10K、Express or Flask、最近の commit がある repo を狙う。Module 29 のフローに従って調査開始。</p>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 27-28</div><div class="day-time">~2h/day</div></div>
+                    <div class="day-content">
+                        <h4>調査継続: Auth Middleware + Advisory チェック</h4>
+                        <p>選んだ target の auth middleware を audit。GHSA で既存 advisory を確認し、incomplete fix variant を探す。</p>
+                    </div>
+                </div>
+                <div class="day">
+                    <div><div class="day-num">Day 29-30</div><div class="day-time">~2h/day</div></div>
+                    <div class="day-content">
+                        <h4>Finding → Report Draft → 提出判断</h4>
+                        <p>脆弱性が見つかった場合: PoC 作成 → レポートドラフト → self-review → 提出。見つからなかった場合: 別の target に pivot。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="milestone">
+            <h4>Milestone 4: 「最初のレポートを書いた (or 提出した)」</h4>
+            <p>huntr で実際の OSS を調査し、レポートを書ける状態になった。提出まで行けたら大成功。行けなくても「調査→判断→pivot」のサイクルを回せたら十分。</p>
+        </div>
+
+        <!-- After 30 days -->
+        <div class="section">
+            <h2>Day 31 以降: 継続学習</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Week 5-6</strong>: Phase 3 (Recon & Blackbox) を学び、HackerOne / IssueHunt のプログラムを試す</li>
+                    <li><strong>Week 7-8</strong>: Phase 4 (Advanced) の興味あるトピックを深堀り (OAuth, Race Condition, GraphQL など)</li>
+                    <li><strong>月次ルーティン</strong>: 毎週1回は調査セッション (2-3h)。news/09_bug-bounty の日次ダイジェストで最新トレンドキャッチアップ</li>
+                    <li><strong>目標設定</strong>: 3ヶ月で最初の Resolved (有効判定)。6ヶ月で最初の Bounty ($100+)</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Tips</h2>
+            <div class="callout">
+                <div class="callout-title">焦らない</div>
+                <p>最初の1ヶ月で bounty を得る人は稀。最初は学習と signal 蓄積の期間。3-6ヶ月スパンで考える。</p>
+            </div>
+            <div class="callout">
+                <div class="callout-title">毎日少しずつ > 週末に一気</div>
+                <p>1日30分でもいいから毎日触れる方が、週末に6時間やるより定着する。</p>
+            </div>
+            <div class="callout">
+                <div class="callout-title">Lab をスキップしない</div>
+                <p>理論を読むだけでは身に付かない。WSA Lab と bb-whitebox-01 は必ず手を動かす。</p>
+            </div>
+        </div>
+
+        <div class="page-nav">
+            <a href="index.html">&larr; Top Page</a>
+            <a href="quiz.html">Quiz 一覧 &rarr;</a>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Node.js / Express Security Audit - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 2: Source Code Audit &gt; Node.js / Express Security Audit
+        </div>
+
+        <div class="page-header">
+            <h1>Node.js / Express Security Audit</h1>
+            <p class="subtitle">
+                Express アプリケーションの典型的脆弱性パターン。Middleware ordering, Prototype Pollution, MongoDB Injection から Template Injection まで。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Express Middleware Ordering Issues</h2>
+            <p>Express は middleware を<strong>登録順</strong>に実行する。順序ミスは auth bypass に直結する。</p>
+
+<pre><code>// 危険: route が auth middleware より先に登録されている
+app.use('/api/public', publicRoutes);
+app.use('/api', authMiddleware);  // /api/public は素通り
+app.use('/api/admin', adminRoutes);
+
+// 安全: auth を先に適用
+app.use('/api', authMiddleware);
+app.use('/api/public', skipAuth, publicRoutes);
+app.use('/api/admin', adminRoutes);</code></pre>
+
+            <h3>Route Parameter Pollution</h3>
+<pre><code>// Express は同名パラメータを配列にする場合がある
+// GET /api/users?role=admin&role=user
+// req.query.role = ['admin', 'user']
+
+// 危険: 文字列比較のつもりが配列で通過
+if (req.query.role !== 'admin') {
+    // ['admin', 'user'] !== 'admin' は true... bypass!
+}</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Prototype Pollution</h2>
+            <p>JavaScript の prototype chain を汚染し、全 object に任意プロパティを注入する攻撃。</p>
+
+            <h3>危険パターン</h3>
+<pre><code>// Deep merge without prototype check
+function merge(target, source) {
+    for (let key in source) {
+        if (typeof source[key] === 'object') {
+            target[key] = merge(target[key] || {}, source[key]);
+        } else {
+            target[key] = source[key];
+        }
+    }
+    return target;
+}
+
+// Attack payload:
+// {"__proto__": {"isAdmin": true}}
+// 全 object に isAdmin = true が注入される</code></pre>
+
+            <h3>grep パターン</h3>
+<pre><code>rg -n "Object\.assign\(|\.merge\(|deepMerge\(|extend\(" --type js
+rg -n "lodash\.merge|_.merge|deepmerge" --type js
+rg -n "\[key\]\s*=" --type js  # dynamic property assignment</code></pre>
+
+            <h3>対策の確認ポイント</h3>
+            <ul>
+                <li><code>__proto__</code>, <code>constructor</code>, <code>prototype</code> キーのブロック有無</li>
+                <li><code>Object.create(null)</code> の使用有無</li>
+                <li><code>hasOwnProperty</code> チェックの有無</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>require() Injection / eval / Function</h2>
+
+<pre><code>// Command Injection via child_process
+const { exec } = require('child_process');
+exec(`git clone ${req.body.url}`);  // Injection!
+
+// eval with user input
+const result = eval(req.body.expression);
+
+// Function constructor (hidden eval)
+const fn = new Function('return ' + req.body.code);
+
+// require() injection (rare but critical)
+const module = require(req.body.plugin);  // RCE</code></pre>
+
+            <h3>grep パターン</h3>
+<pre><code>rg -n "exec\(|execSync\(|spawn\(" --type js
+rg -n "eval\(|new Function\(" --type js
+rg -n "require\(.*req\." --type js
+rg -n "vm\.(runIn|createContext)" --type js</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Template Injection (EJS / Pug)</h2>
+
+<pre><code>// EJS: Server-Side Template Injection
+// 危険: ユーザ入力を template 文字列に直接埋め込み
+app.get('/preview', (req, res) => {
+    const template = `&lt;h1&gt;Hello ${req.query.name}&lt;/h1&gt;`;
+    res.render(template);  // SSTI if render parses EJS tags
+});
+
+// EJS RCE payload:
+// &lt;%= global.process.mainModule.require('child_process').execSync('id') %&gt;
+
+// Pug SSTI:
+// #{7*7} → 49 (expression evaluation)</code></pre>
+
+            <div class="callout danger">
+                <div class="callout-title">EJS の settings['view options'] 汚染</div>
+                <p>Prototype Pollution と EJS を組み合わせると RCE に escalate できる。<code>settings['view options']</code> 経由で <code>outputFunctionName</code> を汚染し、任意コード実行が可能。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>MongoDB Injection</h2>
+            <p>NoSQL でも Injection は発生する。<code>$gt</code>, <code>$ne</code>, <code>$regex</code> operator を注入する。</p>
+
+<pre><code>// 危険: req.body を直接 query に使用
+const user = await User.findOne({
+    username: req.body.username,
+    password: req.body.password
+});
+
+// Attack payload:
+// {"username": "admin", "password": {"$ne": ""}}
+// → password が空でない限り全て match → auth bypass
+
+// $regex による情報抽出:
+// {"password": {"$regex": "^a"}}  → starts with 'a'?</code></pre>
+
+            <h3>grep パターン</h3>
+<pre><code>rg -n "findOne\(.*req\.|find\(.*req\.|updateOne\(.*req\." --type js
+rg -n "\\\$where|\\\$regex|\\\$gt|\\\$ne|\\\$exists" --type js
+rg -n "mongoose.*\{.*req\.(body|query|params)" --type js</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Real Cases</h2>
+
+            <h3>Case 1: Flowise WHITELIST_URLS Bypass</h3>
+            <div class="card">
+                <p><strong>問題</strong>: Express middleware が <code>WHITELIST_URLS</code> 配列で認証をスキップする route を管理。</p>
+                <p><strong>Vulnerability</strong>: <code>startsWith()</code> で prefix match していたため、<code>/api/v1/public</code> のつもりが <code>/api/v1/public/../admin</code> で bypass 可能。さらに 6+ sibling endpoint が同パターンで無認証アクセス可能。</p>
+<pre><code>// Flowise の問題パターン
+const WHITELIST_URLS = ['/api/v1/public', '/api/v1/verify'];
+if (WHITELIST_URLS.some(url => req.path.startsWith(url))) {
+    return next(); // auth skip
+}</code></pre>
+            </div>
+
+            <h3>Case 2: AnythingLLM Middleware Missing</h3>
+            <div class="card">
+                <p><strong>問題</strong>: <code>validWorkspaceSlug</code> middleware が一部 route にのみ追加され、他 route は無防備。</p>
+                <p><strong>発見方法</strong>: git diff で middleware 追加 commit を特定 &rarr; 同 router の他 route を grep &rarr; 2 endpoint に middleware 欠落。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Audit Checklist</h2>
+            <table>
+                <thead><tr><th>Category</th><th>Check</th><th>grep pattern</th></tr></thead>
+                <tbody>
+                    <tr><td>Auth</td><td>Middleware 適用漏れ</td><td><code>router.(get|post) で auth middleware なし</code></td></tr>
+                    <tr><td>Injection</td><td>exec/spawn with user input</td><td><code>exec(.*req.|spawn(.*req.</code></td></tr>
+                    <tr><td>Prototype</td><td>Deep merge without guard</td><td><code>merge(|assign(|extend(</code></td></tr>
+                    <tr><td>NoSQL</td><td>Query with raw req.body</td><td><code>find(.*req.body|findOne(.*req.body</code></td></tr>
+                    <tr><td>SSTI</td><td>Template with user data</td><td><code>render(.*req.|ejs.render(</code></td></tr>
+                    <tr><td>Path</td><td>File ops with user input</td><td><code>path.join(.*req.|readFile(.*req.</code></td></tr>
+                    <tr><td>SSRF</td><td>HTTP request with user URL</td><td><code>axios(.*req.|fetch(.*req.|got(.*req.</code></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Middleware ordering</strong> は Express 最大の罠 — 登録順 = 実行順を常に意識</li>
+                    <li><strong>Prototype Pollution</strong> は単体で Low でも EJS/Handlebars と組むと RCE に化ける</li>
+                    <li><strong>MongoDB Injection</strong> は JSON body で operator を注入 — <code>$ne</code>, <code>$gt</code>, <code>$regex</code></li>
+                    <li><strong>WHITELIST pattern</strong> は必ず sibling を探す — 1箇所見つけたら 6+ 見つかることが多い</li>
+                    <li>huntr OSS 対象の多くが Express ベース — このモジュールの知識だけで多くの finding に到達可能</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="21-node" onclick="toggleComplete('21-node')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="20-code-review-method.html">&larr; 前: Code Review Methodology</a>
+            <a href="22-python-audit.html">次: Python Audit &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

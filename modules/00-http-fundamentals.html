@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTTP Protocol Deep Dive - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn {
+            display: inline-block;
+            padding: 0.5rem 1.2rem;
+            border: 1px solid var(--green);
+            border-radius: 6px;
+            background: transparent;
+            color: var(--green);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .complete-btn:hover { background: var(--green); color: #000; }
+        .complete-btn.is-complete { background: var(--green); color: #000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 0: Foundation &gt; HTTP Protocol Deep Dive
+        </div>
+
+        <div class="page-header">
+            <h1>HTTP Protocol Deep Dive</h1>
+            <p class="subtitle">
+                Webアプリケーションの全通信基盤。ここを理解しないと、あらゆる脆弱性の「なぜ刺さるか」が分からない。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+            </div>
+        </div>
+
+        <!-- Glossary -->
+        <div class="section">
+            <h2>このコース全体で使う基本用語</h2>
+            <p>以下の用語はこの先すべてのモジュールで繰り返し登場する。ここで意味を押さえておく。</p>
+            <table>
+                <thead><tr><th>用語</th><th>意味</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Vulnerability</strong> (脆弱性)</td><td>ソフトウェアのセキュリティ上の欠陥。攻撃者が悪用できるバグ</td></tr>
+                    <tr><td><strong>Exploit</strong> (エクスプロイト)</td><td>脆弱性を実際に悪用する手段・コード</td></tr>
+                    <tr><td><strong>Attack Surface</strong></td><td>攻撃者が入力を送れる全てのポイント (URL, フォーム, API, ヘッダなど)</td></tr>
+                    <tr><td><strong>Payload</strong> (ペイロード)</td><td>攻撃のために送り込むデータ。例: XSS なら <code>&lt;script&gt;alert(1)&lt;/script&gt;</code></td></tr>
+                    <tr><td><strong>Bypass</strong> (バイパス)</td><td>セキュリティチェックを回避すること</td></tr>
+                    <tr><td><strong>Sanitize</strong> (サニタイズ)</td><td>ユーザー入力から危険な文字を除去/無害化する処理</td></tr>
+                    <tr><td><strong>PoC</strong> (Proof of Concept)</td><td>脆弱性が実際に悪用可能であることを示す最小限のデモ</td></tr>
+                    <tr><td><strong>WAF</strong> (Web Application Firewall)</td><td>HTTP 通信を監視し、攻撃パターンを検知してブロックするフィルタ</td></tr>
+                    <tr><td><strong>Scope</strong> (スコープ)</td><td>BB プログラムでテストが許可されている対象の範囲</td></tr>
+                    <tr><td><strong>Report</strong> (レポート)</td><td>発見した脆弱性をプラットフォームに報告する文書</td></tr>
+                    <tr><td><strong>Bounty</strong> (報奨金)</td><td>有効な脆弱性報告に対して支払われる金銭</td></tr>
+                    <tr><td><strong>Duplicate (Dup)</strong></td><td>他の人が既に同じ脆弱性を報告済みだった場合</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Section: Why -->
+        <div class="section">
+            <h2>なぜ HTTP を深く理解する必要があるか</h2>
+            <p>
+                Bug Bounty で見つかる脆弱性の大半は、HTTP通信の挙動を悪用したものだ。
+                SSRF (サーバーに内部リクエストを送らせる攻撃) は HTTP request の送信先を操作する。
+                CSRF (被害者のブラウザから意図しないリクエストを送らせる攻撃) は browser が自動付与する Cookie を悪用する。
+                Request Smuggling は HTTP parser (リクエストを解析するソフト) の差異を突く。
+                これらは全て後のモジュールで詳しく学ぶ。
+            </p>
+            <p>
+                HTTPの仕組みが頭に入っていれば「この header は誰が付けた？」「この response は cache (一時保存) される？」
+                といった問いが自然に浮かぶ。それがそのまま attack surface の発見につながる。
+            </p>
+
+            <h3>HTTP通信の基本フロー</h3>
+            <div class="mermaid">
+sequenceDiagram
+    participant B as Browser (Client)
+    participant S as Server
+
+    B->>S: HTTP Request<br/>GET /api/users HTTP/1.1<br/>Host: example.com<br/>Cookie: session=abc
+    S->>B: HTTP Response<br/>200 OK<br/>Content-Type: application/json<br/>Set-Cookie: session=xyz<br/><br/>{"users": [...]}
+
+    Note over B,S: これが全てのWeb通信の基本形
+            </div>
+        </div>
+
+        <!-- Section: Request -->
+        <div class="section">
+            <h2>HTTP Request の構造</h2>
+
+            <h3>Request Line</h3>
+<pre><code>GET /api/users?id=123 HTTP/1.1
+POST /login HTTP/1.1
+PUT /api/profile HTTP/1.1
+DELETE /api/sessions/abc HTTP/1.1</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">BB視点</div>
+                <p>
+                    Method（<span class="keyword">GET</span>, <span class="keyword">POST</span>, <span class="keyword">PUT</span>, <span class="keyword">DELETE</span>, <span class="keyword">PATCH</span>）を
+                    変えるだけで認可チェックをbypassできることがある。<br>
+                    例: <code>DELETE /api/user/123</code> は禁止だが <code>POST /api/user/123</code> + <code>_method=DELETE</code> で通る（Method Override）。
+                </p>
+            </div>
+
+            <h3>Headers（重要なもの）</h3>
+            <table>
+                <thead><tr><th>Header</th><th>役割</th><th>BB との関連</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td><code>Host</code></td>
+                        <td>リクエスト先のドメインを指定</td>
+                        <td>Host header injection, Password reset poisoning, Cache poisoning</td>
+                    </tr>
+                    <tr>
+                        <td><code>Cookie</code></td>
+                        <td>セッション情報の送信</td>
+                        <td>Session fixation, Cookie tossing, SameSite bypass</td>
+                    </tr>
+                    <tr>
+                        <td><code>Authorization</code></td>
+                        <td>認証情報 (Bearer token, Basic auth)</td>
+                        <td>Token leakage via Referer, Bearer vs Cookie の違い</td>
+                    </tr>
+                    <tr>
+                        <td><code>Content-Type</code></td>
+                        <td>Body のフォーマット指定</td>
+                        <td>CSRF bypass (application/json → multipart), XXE trigger</td>
+                    </tr>
+                    <tr>
+                        <td><code>Origin</code> / <code>Referer</code></td>
+                        <td>リクエスト元の情報</td>
+                        <td>CORS validation, CSRF token validation bypass</td>
+                    </tr>
+                    <tr>
+                        <td><code>X-Forwarded-For</code></td>
+                        <td>Proxy経由の元IP</td>
+                        <td>IP制限bypass, Rate limit bypass, Admin panel access</td>
+                    </tr>
+                    <tr>
+                        <td><code>Transfer-Encoding</code></td>
+                        <td>Body の転送方式 (chunked)</td>
+                        <td>HTTP Request Smuggling (CL.TE / TE.CL)</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Body Formats</h3>
+            <h4>application/x-www-form-urlencoded</h4>
+<pre><code>username=admin&password=hunter2&remember=true</code></pre>
+            <p>HTMLフォームのデフォルト。key=value を <code>&</code> で連結。URL encoding が必要。</p>
+
+            <h4>multipart/form-data</h4>
+<pre><code>------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="shell.php"
+Content-Type: image/png
+
+&lt;?php system($_GET['cmd']); ?&gt;
+------WebKitFormBoundary7MA4YWxkTrZu0gW--</code></pre>
+            <p>ファイルアップロードで使用。<span class="keyword">boundary</span> で各フィールドを区切る。</p>
+
+            <div class="callout warning">
+                <div class="callout-title">BB視点: Content-Type switching</div>
+                <p>
+                    CSRF 対策で <code>application/json</code> のみ受け付けるAPIが、
+                    <code>multipart/form-data</code> や <code>text/plain</code> でも同じ処理を実行する場合がある。
+                    Content-Type を変えてリクエストを送ってみることは基本テクニック。
+                </p>
+            </div>
+
+            <h4>application/json</h4>
+<pre><code>{
+  "username": "admin",
+  "password": "hunter2",
+  "role": "user"
+}</code></pre>
+            <p>REST API の標準。<span class="keyword">Mass Assignment</span>（<code>"role": "admin"</code> を追加して権限昇格）の温床。</p>
+        </div>
+
+        <!-- Section: Response -->
+        <div class="section">
+            <h2>HTTP Response の構造</h2>
+
+            <h3>Status Codes（BB で重要なもの）</h3>
+            <div class="mermaid">
+flowchart LR
+    Req[Request送信] --> R{Status Code?}
+    R -->|2xx| OK["成功<br/>→ アクセス許可された"]
+    R -->|3xx| Redir["リダイレクト<br/>→ Open Redirect?"]
+    R -->|401| Auth["未認証<br/>→ 認証bypass探す"]
+    R -->|403| Authz["権限なし<br/>→ 認可bypass探す"]
+    R -->|404| NF["存在しない<br/>→ 本当に? 隠しendpoint?"]
+    R -->|500| Err["サーバーエラー<br/>→ 入力が処理に到達!<br/>Injection可能性"]
+            </div>
+            <table>
+                <thead><tr><th>Code</th><th>意味</th><th>BB との関連</th></tr></thead>
+                <tbody>
+                    <tr><td><code>200 OK</code></td><td>成功</td><td>認可チェックを通過した証拠</td></tr>
+                    <tr><td><code>301/302</code></td><td>リダイレクト</td><td>Open redirect, OAuth token theft via redirect</td></tr>
+                    <tr><td><code>400</code></td><td>Bad Request</td><td>入力パースエラー → parser differential のヒント</td></tr>
+                    <tr><td><code>401</code></td><td>Unauthorized</td><td>認証必要（≠認可チェック済み）</td></tr>
+                    <tr><td><code>403</code></td><td>Forbidden</td><td>認可拒否。bypass 方法を探す起点</td></tr>
+                    <tr><td><code>404</code></td><td>Not Found</td><td>endpoint 存在しない OR hidden endpoint</td></tr>
+                    <tr><td><code>405</code></td><td>Method Not Allowed</td><td>他の Method を試す手がかり</td></tr>
+                    <tr><td><code>500</code></td><td>Internal Server Error</td><td>入力処理の異常 → Injection 系のシグナル</td></tr>
+                    <tr><td><code>502/503</code></td><td>Bad Gateway / Unavailable</td><td>Backend 到達 → SSRF 成功のシグナル</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout">
+                <div class="callout-title">401 vs 403 の違い</div>
+                <p>
+                    <strong>401</strong> = 「あなたは誰？」（Authentication 不足）<br>
+                    <strong>403</strong> = 「あなたには権限がない」（Authorization 不足）<br>
+                    401 が返る endpoint は認証 bypass を探す。403 は認可 bypass（IDOR, Role escalation）を探す。
+                </p>
+            </div>
+
+            <h3>Response Headers（セキュリティ関連）</h3>
+            <table>
+                <thead><tr><th>Header</th><th>防御機能</th><th>不在時の攻撃</th></tr></thead>
+                <tbody>
+                    <tr><td><code>Set-Cookie: ...; HttpOnly; Secure; SameSite=Strict</code></td><td>Cookie 保護</td><td>XSS でのトークン窃取、CSRF</td></tr>
+                    <tr><td><code>Content-Security-Policy</code></td><td>XSS 緩和</td><td>Inline script 実行、外部 JS 読み込み</td></tr>
+                    <tr><td><code>X-Frame-Options</code> / CSP <code>frame-ancestors</code></td><td>Clickjacking 防止</td><td>iframe で UI を重ねて操作させる</td></tr>
+                    <tr><td><code>Access-Control-Allow-Origin</code></td><td>CORS 制御</td><td>クロスオリジンでのデータ読み取り</td></tr>
+                    <tr><td><code>Strict-Transport-Security</code></td><td>HTTPS 強制</td><td>Downgrade attack, Cookie 盗聴</td></tr>
+                    <tr><td><code>Cache-Control</code></td><td>キャッシュ制御</td><td>Web Cache Poisoning / Deception</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Section: HTTP/2 -->
+        <div class="section">
+            <h2>HTTP/2 と HTTP/3</h2>
+
+            <h3>HTTP/2 の特徴</h3>
+            <ul>
+                <li><strong>Binary framing</strong> — テキストではなくバイナリフレーム。手動での改ざんが難しい</li>
+                <li><strong>Multiplexing</strong> — 1つの TCP 接続で複数のリクエストを並行処理</li>
+                <li><strong>Header compression (HPACK)</strong> — ヘッダの圧縮</li>
+                <li><strong>Server Push</strong> — サーバーからのリソース先行送信</li>
+            </ul>
+
+            <div class="callout warning">
+                <div class="callout-title">BB視点: H2 特有の攻撃</div>
+                <ul>
+                    <li><strong>H2.CL Request Smuggling</strong> — HTTP/2 の <code>:method</code>, <code>:path</code> pseudo-headers と Content-Length の不整合を突く</li>
+                    <li><strong>H2C Smuggling</strong> — HTTP/2 cleartext upgrade を悪用して reverse proxy をバイパス</li>
+                    <li><strong>HPACK Bomb</strong> — 圧縮ヘッダの展開によるDoS</li>
+                </ul>
+            </div>
+
+            <h3>HTTP/3 (QUIC)</h3>
+            <p>
+                UDP ベースの QUIC プロトコル上で動作。TCP の Head-of-Line blocking を解消。
+                BB 視点では HTTP/3 特有の脆弱性はまだ少ないが、QUIC の UDP ベースという特性から
+                amplification attack や protocol confusion のリサーチが進行中。
+            </p>
+        </div>
+
+        <!-- Section: Practical -->
+        <div class="section">
+            <h2>実践: リクエストの観察と改ざん</h2>
+
+            <h3>DevTools で観察する</h3>
+            <ol>
+                <li>Chrome DevTools → Network タブを開く</li>
+                <li>任意のWebサイトを開いて通信を観察</li>
+                <li>各リクエストの Headers / Payload / Response を確認</li>
+                <li>特に注目: <code>Set-Cookie</code> の属性、<code>Authorization</code> header の有無</li>
+            </ol>
+
+            <h3>curl で手動リクエスト</h3>
+<pre><code># 基本的なGET
+curl -v https://example.com/api/users
+
+# POST with JSON body
+curl -X POST https://example.com/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"test"}'
+
+# Cookie付きリクエスト
+curl -b "session=abc123" https://example.com/api/profile
+
+# Header injection テスト
+curl -H "X-Forwarded-For: 127.0.0.1" https://example.com/admin
+
+# Method Override
+curl -X POST https://example.com/api/user/123 \
+  -H "X-HTTP-Method-Override: DELETE"</code></pre>
+
+            <h3>Burp Suite で改ざんする</h3>
+            <ol>
+                <li>Proxy → Intercept ON にしてブラウザ操作</li>
+                <li>Intercepted request の任意の部分を書き換え</li>
+                <li>Repeater に送って繰り返しテスト</li>
+                <li>Response の差異を観察（200 vs 403 vs 500）</li>
+            </ol>
+        </div>
+
+        <!-- Section: Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>全ての脆弱性は HTTP通信の上で発生する</strong> — request/response の構造を完全に理解する</li>
+                    <li><strong>Header は attack surface</strong> — <code>Host</code>, <code>X-Forwarded-For</code>, <code>Content-Type</code> の操作は基本技</li>
+                    <li><strong>Status code は情報源</strong> — 403 は「認可チェックがある」の証拠、500 は「入力がバックエンドに届いた」の証拠</li>
+                    <li><strong>HTTP/2 は新しい attack surface</strong> — H2.CL smuggling, H2C bypass は最新トレンド</li>
+                    <li><strong>Content-Type switching</strong> — 同じ endpoint でも Body format を変えると挙動が変わることがある</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Section: References -->
+        <div class="section">
+            <h2>References & Next Steps</h2>
+            <h4>Web Security Academy Labs</h4>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/request-smuggling" target="_blank">HTTP Request Smuggling</a> — Phase 4 で深堀りするが、HTTP基礎として概要だけ把握</li>
+                <li><a href="https://portswigger.net/web-security/host-header" target="_blank">HTTP Host Header Attacks</a></li>
+            </ul>
+
+            <h4>外部リソース</h4>
+            <ul>
+                <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP" target="_blank">MDN: HTTP</a> — 正確なリファレンス</li>
+                <li><a href="https://httpwg.org/specs/" target="_blank">HTTP Working Group Specs</a> — RFC原文</li>
+                <li>RFC 9110 (HTTP Semantics), RFC 9112 (HTTP/1.1), RFC 9113 (HTTP/2), RFC 9114 (HTTP/3)</li>
+            </ul>
+
+            <h4>関連モジュール</h4>
+            <ul>
+                <li><a href="01-browser-security.html">次: Browser Security Model</a> — SOP, CORS, CSP</li>
+                <li><a href="46-http-smuggling.html">Phase 4: HTTP Request Smuggling</a> — HTTP/2 smuggling の詳細</li>
+                <li><a href="45-cache-poisoning.html">Phase 4: Web Cache Poisoning</a> — Cache-Control と response header 活用</li>
+            </ul>
+        </div>
+
+        <!-- Complete button -->
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="00-http" onclick="toggleComplete('00-http')">Mark Complete</button>
+        </div>
+
+        <!-- Navigation -->
+        <div class="page-nav">
+            <a href="../index.html">&larr; Top Page</a>
+            <a href="01-browser-security.html">次: Browser Security Model &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

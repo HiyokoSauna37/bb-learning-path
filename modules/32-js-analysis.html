@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JavaScript Analysis - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn {
+            display: inline-block;
+            padding: 0.5rem 1.2rem;
+            border: 1px solid var(--green);
+            border-radius: 6px;
+            background: transparent;
+            color: var(--green);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .complete-btn:hover { background: var(--green); color: #000; }
+        .complete-btn.is-complete { background: var(--green); color: #000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 3: Recon &amp; Blackbox &gt; JavaScript Analysis
+        </div>
+
+        <div class="page-header">
+            <h1>JavaScript Analysis</h1>
+            <p class="subtitle">
+                フロントエンドの JS ファイルには API endpoint、secret、内部ロジックが埋もれている。
+                これを体系的に抽出する技術。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-practice">Practice</span>
+            </div>
+        </div>
+
+        <!-- Section: Why -->
+        <div class="section">
+            <h2>なぜ JavaScript を分析するのか</h2>
+            <p>
+                モダンな SPA (Single Page Application) ではビジネスロジックの大部分がフロントエンドに存在する。
+                API endpoint のパス、認証トークンの扱い方、管理者向け機能のルーティングが
+                JS バンドル内に平文で含まれている。これは攻撃者にとって設計図を無料で入手するようなもの。
+            </p>
+        </div>
+
+        <!-- Section: Finding JS Files -->
+        <div class="section">
+            <h2>JS ファイルの収集</h2>
+
+<pre><code># getJS - ページから JS ファイル URL を抽出
+echo https://target.com | getJS --complete
+
+# waybackurls から .js ファイルを抽出
+echo target.com | waybackurls | grep -E "\.js(\?|$)" | sort -u > js_files.txt
+
+# httpx で alive check
+cat js_files.txt | httpx -silent -mc 200 > alive_js.txt
+
+# ページソースから直接抽出
+curl -s https://target.com | grep -oP 'src="[^"]*\.js[^"]*"' | \
+  sed 's/src="//;s/"//' | sort -u
+
+# Burp Suite の Sitemap から Export (大量の JS を効率的に収集)</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">Tips: Wayback の JS は宝の山</div>
+                <p>
+                    過去のバージョンの JS には、後から削除された endpoint や
+                    一時的に公開されていた API key が含まれている可能性がある。
+                    現在のバージョンと diff を取ると特に有用。
+                </p>
+            </div>
+        </div>
+
+        <!-- Section: API Endpoint Extraction -->
+        <div class="section">
+            <h2>API Endpoint Extraction</h2>
+
+            <h3>LinkFinder</h3>
+            <p>JS ファイルから URL パターンを正規表現で抽出する定番ツール。</p>
+<pre><code># 単一ファイル
+python3 linkfinder.py -i https://target.com/static/app.js -o cli
+
+# ドメイン全体
+python3 linkfinder.py -i https://target.com -d -o results.html</code></pre>
+
+            <h3>JSLuice</h3>
+            <p>Go 製の高速 JS 解析ツール。URL、secret、DOM sink を一括検出。</p>
+<pre><code># URL 抽出
+cat alive_js.txt | jsluice urls
+
+# Secret 検出
+cat alive_js.txt | jsluice secrets</code></pre>
+
+            <h3>手動での grep パターン</h3>
+<pre><code># API path の抽出
+grep -ohE '"/api/[a-zA-Z0-9_/]+"' bundle.js | sort -u
+grep -ohE "'/api/[a-zA-Z0-9_/]+'" bundle.js | sort -u
+
+# fetch/axios の呼び出し
+grep -oE 'fetch\("[^"]+"\)' bundle.js
+grep -oE 'axios\.(get|post|put|delete)\("[^"]+"\)' bundle.js
+
+# GraphQL endpoint
+grep -i "graphql\|/gql\|query.*{" bundle.js</code></pre>
+        </div>
+
+        <!-- Section: Secret Detection -->
+        <div class="section">
+            <h2>Secret Detection in JS</h2>
+            <p>
+                開発者が意図せず JS にハードコードしてしまう機密情報は想像以上に多い。
+            </p>
+
+            <h3>SecretFinder</h3>
+<pre><code>python3 SecretFinder.py -i https://target.com/app.js -o cli</code></pre>
+
+            <h3>検出パターン例</h3>
+<pre><code># API Keys
+grep -oE '[A-Za-z0-9_]{20,}' bundle.js  # 長いランダム文字列
+
+# AWS
+grep -oE 'AKIA[0-9A-Z]{16}' bundle.js
+
+# Google Maps API Key
+grep -oE 'AIza[0-9A-Za-z\-_]{35}' bundle.js
+
+# Firebase
+grep -oE 'firebase[a-zA-Z]*\.googleapis\.com' bundle.js
+
+# 内部URL
+grep -oE 'https?://[a-z0-9\-]+\.internal\.[a-z]+' bundle.js
+
+# JWT (ハードコードされたテストトークン)
+grep -oE 'eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+' bundle.js</code></pre>
+
+            <div class="callout warning">
+                <div class="callout-title">重要: Secret の有効性確認</div>
+                <p>
+                    見つけた key/token は実際に有効かどうか確認する必要がある。
+                    無効な key を report しても reject される。
+                    <a href="https://github.com/streaak/keyhacks" target="_blank">KeyHacks</a>
+                    を使って各サービスの key validation 方法を確認すること。
+                </p>
+            </div>
+        </div>
+
+        <!-- Section: Source Maps -->
+        <div class="section">
+            <h2>Source Maps (.map Files)</h2>
+            <p>
+                Source map はミニファイされた JS を元のソースコードにマッピングするファイル。
+                本番環境に公開されたままの場合、完全なソースコードが取得できる。
+            </p>
+
+<pre><code># .map ファイルの存在確認
+curl -s https://target.com/static/app.js | grep "sourceMappingURL"
+# //# sourceMappingURL=app.js.map
+
+# Source map のダウンロード
+curl -o app.js.map https://target.com/static/app.js.map
+
+# unwebpack-sourcemap で元のソースツリーを復元
+npx unwebpack-sourcemap app.js.map output_dir/
+
+# sourcemapper (Go tool)
+sourcemapper -url https://target.com/static/app.js.map -output ./source/</code></pre>
+
+            <h3>Source map から得られる情報</h3>
+            <ul>
+                <li>元のディレクトリ構造とファイル名</li>
+                <li>コメント付きの読みやすいソースコード</li>
+                <li>環境変数の参照パターン</li>
+                <li>内部 API のエラーハンドリングロジック</li>
+                <li>認証・認可のクライアント側実装</li>
+            </ul>
+        </div>
+
+        <!-- Section: Webpack Analysis -->
+        <div class="section">
+            <h2>Webpack Chunk Analysis</h2>
+            <p>
+                Webpack で build された SPA は複数の chunk に分割される。
+                管理者画面など、通常ユーザーには表示されない chunk にも直接アクセスできる場合がある。
+            </p>
+
+<pre><code># Chunk ファイルの列挙
+# webpack の runtime から chunk 名を抽出
+grep -oE '[0-9]+:"[a-f0-9]+"' runtime.js
+
+# 命名パターンから推測
+# /static/js/0.abc123.chunk.js
+# /static/js/1.def456.chunk.js
+# admin chunk: /static/js/admin.789ghi.chunk.js
+
+# 各 chunk の内容を確認
+for i in $(seq 0 50); do
+  curl -s "https://target.com/static/js/${i}.*.chunk.js" | \
+    grep -l "admin\|internal\|secret" 2>/dev/null
+done</code></pre>
+        </div>
+
+        <!-- Section: DOM XSS -->
+        <div class="section">
+            <h2>DOM XSS: Source/Sink Analysis</h2>
+            <p>
+                DOM-based XSS はサーバーを経由せず、JS 内で source (入力) が sink (危険な出力) に
+                到達することで発生する。
+            </p>
+
+            <h3>Sources (攻撃者が制御可能な入力)</h3>
+<pre><code>location.hash
+location.search
+location.href
+document.referrer
+document.cookie
+window.name
+postMessage data</code></pre>
+
+            <h3>Sinks (危険な出力先)</h3>
+<pre><code>document.write()
+innerHTML
+outerHTML
+eval()
+setTimeout(string)
+setInterval(string)
+Function(string)
+location.href = ...
+location.assign()
+jQuery.html()
+$.html()</code></pre>
+
+            <h3>検出手順</h3>
+<pre><code># DOM XSS source/sink を grep
+grep -nE "(location\.(hash|search|href)|document\.referrer)" bundle.js
+grep -nE "(innerHTML|document\.write|eval\(|\.html\()" bundle.js
+
+# DOM Invader (Burp Suite extension) で自動検出
+# Chrome DevTools で breakpoint を設定して data flow を追跡</code></pre>
+        </div>
+
+        <!-- Section: Tools -->
+        <div class="section">
+            <h2>RetireJS: Known Vulnerable Libraries</h2>
+            <p>
+                使用されている JS ライブラリに既知の脆弱性がないか確認する。
+                古い jQuery, Angular, lodash などは CVE が多い。
+            </p>
+<pre><code># CLI
+retire --js --path ./downloaded_js/
+
+# Burp Extension: Retire.js
+# ブラウジング中に自動検出
+
+# npm audit (package.json がある場合)
+npm audit</code></pre>
+        </div>
+
+        <!-- Section: Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>JS = 設計図</strong> — API path, 認証ロジック, admin 機能が全て読める</li>
+                    <li><strong>Source map は致命的</strong> — 本番に .map が残っていたら全ソース復元可能</li>
+                    <li><strong>Secret は validate する</strong> — 見つけた key が live でなければ report 価値なし</li>
+                    <li><strong>Wayback の JS diff</strong> — 過去と現在の差分から削除された機能を発見</li>
+                    <li><strong>DOM XSS は source→sink</strong> — data flow を追跡して exploit 可能性を判断</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Section: References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://github.com/BishopFox/jsluice" target="_blank">JSLuice - GitHub (BishopFox)</a></li>
+                <li><a href="https://github.com/GerbenJavado/LinkFinder" target="_blank">LinkFinder - GitHub</a></li>
+                <li><a href="https://github.com/m4ll0k/SecretFinder" target="_blank">SecretFinder - GitHub</a></li>
+                <li><a href="https://github.com/AliasIO/wappalyzer" target="_blank">Wappalyzer</a> — 技術スタック検出</li>
+                <li><a href="https://github.com/nickmcmillan/unwebpack-sourcemap" target="_blank">unwebpack-sourcemap</a> — Source Map からソース復元</li>
+                <li><a href="https://github.com/nickmcmillan/retirejs" target="_blank">RetireJS - GitHub</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete button -->
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="32-js" onclick="toggleComplete('32-js')">Mark Complete</button>
+        </div>
+
+        <!-- Navigation -->
+        <div class="page-nav">
+            <a href="31-content-discovery.html">&larr; 前: Content &amp; Endpoint Discovery</a>
+            <a href="33-api-testing.html">次: API Security Testing &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

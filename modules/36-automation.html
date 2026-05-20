@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Automation & Custom Tools - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn {
+            display: inline-block;
+            padding: 0.5rem 1.2rem;
+            border: 1px solid var(--green);
+            border-radius: 6px;
+            background: transparent;
+            color: var(--green);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .complete-btn:hover { background: var(--green); color: #000; }
+        .complete-btn.is-complete { background: var(--green); color: #000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 3: Recon &amp; Blackbox &gt; Automation &amp; Custom Tools
+        </div>
+
+        <div class="page-header">
+            <h1>Automation &amp; Custom Tools</h1>
+            <p class="subtitle">
+                反復的な recon を自動化し、新しい attack surface を最速で検知する。
+                ただし自動化の限界を理解し、manual hunting と使い分ける。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-practice">Practice</span>
+            </div>
+        </div>
+
+        <!-- Section: Nuclei -->
+        <div class="section">
+            <h2>Nuclei: Template-Based Scanning</h2>
+
+            <h3>基本的な使い方</h3>
+<pre><code># CVE テンプレートでスキャン
+echo https://target.com | nuclei -t cves/
+
+# 全カテゴリスキャン
+echo https://target.com | nuclei -t cves/ -t exposures/ \
+  -t misconfigurations/ -t vulnerabilities/
+
+# ファイルからの入力
+cat alive_hosts.txt | nuclei -t cves/ -severity critical,high
+
+# 特定技術に絞る
+nuclei -u https://target.com -tags wordpress,apache,nginx</code></pre>
+
+            <h3>Custom Template 作成</h3>
+            <p>
+                発見したパターンを nuclei template 化すると、他のターゲットでも即座に再利用できる。
+            </p>
+<pre><code>id: custom-debug-endpoint
+
+info:
+  name: Debug Endpoint Exposure
+  author: your-handle
+  severity: medium
+  description: |
+    Application debug endpoint is exposed.
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/debug"
+      - "{{BaseURL}}/_debug"
+      - "{{BaseURL}}/api/debug"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "debug_info"
+          - "stack_trace"
+        condition: or</code></pre>
+
+            <h3>高度な Template パターン</h3>
+<pre><code>id: custom-api-key-leak
+
+info:
+  name: API Key in Response
+  author: your-handle
+  severity: high
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/config"
+      - "{{BaseURL}}/api/settings"
+    matchers:
+      - type: regex
+        regex:
+          - "AIza[0-9A-Za-z\\-_]{35}"  # Google API Key
+          - "AKIA[0-9A-Z]{16}"          # AWS Access Key
+          - "sk_live_[0-9a-zA-Z]{24}"   # Stripe Secret
+    extractors:
+      - type: regex
+        regex:
+          - "AIza[0-9A-Za-z\\-_]{35}"
+          - "AKIA[0-9A-Z]{16}"</code></pre>
+        </div>
+
+        <!-- Section: Notification Pipeline -->
+        <div class="section">
+            <h2>Notification Pipeline</h2>
+            <p>
+                新しい subdomain や脆弱性を検出したら即座に通知を受け取る。
+                競合他社より早く report するための生命線。
+            </p>
+
+<pre><code># 完全な自動化パイプライン
+#!/bin/bash
+DOMAIN="target.com"
+DATE=$(date +%Y%m%d)
+PREV="subs_${DOMAIN}_prev.txt"
+CURR="subs_${DOMAIN}_${DATE}.txt"
+
+# Step 1: Subdomain enumeration
+subfinder -d $DOMAIN -silent | sort -u > $CURR
+
+# Step 2: 差分検出
+if [ -f "$PREV" ]; then
+    comm -13 $PREV $CURR > new_subs.txt
+    NEW_COUNT=$(wc -l < new_subs.txt)
+    if [ $NEW_COUNT -gt 0 ]; then
+        echo "[+] $NEW_COUNT new subdomains found"
+
+        # Step 3: Alive check
+        cat new_subs.txt | httpx -silent > new_alive.txt
+
+        # Step 4: Vulnerability scan
+        cat new_alive.txt | nuclei -t cves/ -t exposures/ \
+          -severity critical,high -silent > findings.txt
+
+        # Step 5: Notify
+        cat findings.txt | notify -provider slack -id bb-alerts
+    fi
+fi
+
+cp $CURR $PREV</code></pre>
+
+            <h3>notify 設定</h3>
+<pre><code># $HOME/.config/notify/provider-config.yaml
+slack:
+  - id: bb-alerts
+    slack_webhook_url: "https://hooks.slack.com/services/xxx/yyy/zzz"
+
+discord:
+  - id: bb-discord
+    discord_webhook_url: "https://discord.com/api/webhooks/xxx/yyy"
+
+telegram:
+  - id: bb-telegram
+    telegram_api_key: "BOT_TOKEN"
+    telegram_chat_id: "CHAT_ID"</code></pre>
+        </div>
+
+        <!-- Section: Custom Scripts -->
+        <div class="section">
+            <h2>Custom Scripts</h2>
+            <p>
+                汎用ツールでは検出できない、ターゲット固有の脆弱性パターンは
+                Python スクリプトで個別に検証する。
+            </p>
+
+            <h3>IDOR 自動チェック</h3>
+<pre><code>import requests
+
+BASE = "https://target.com/api/v1"
+MY_TOKEN = "Bearer eyJ..."
+VICTIM_IDS = ["user_123", "user_456", "user_789"]
+
+for uid in VICTIM_IDS:
+    endpoints = [
+        f"/users/{uid}/profile",
+        f"/users/{uid}/documents",
+        f"/users/{uid}/settings",
+    ]
+    for ep in endpoints:
+        r = requests.get(BASE + ep, headers={"Authorization": MY_TOKEN})
+        if r.status_code == 200:
+            print(f"[IDOR] {ep} -> {r.status_code} ({len(r.text)} bytes)")
+        else:
+            print(f"[OK]   {ep} -> {r.status_code}")</code></pre>
+
+            <h3>Rate Limit テスト</h3>
+<pre><code>import requests
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+URL = "https://target.com/api/login"
+PAYLOAD = {"email": "test@test.com", "password": "wrong"}
+
+def send_request(i):
+    r = requests.post(URL, json=PAYLOAD)
+    return (i, r.status_code, r.headers.get("X-RateLimit-Remaining"))
+
+with ThreadPoolExecutor(max_workers=50) as executor:
+    results = list(executor.map(send_request, range(200)))
+
+for i, status, remaining in results:
+    if status != 429:
+        print(f"Request {i}: {status} (remaining: {remaining})")</code></pre>
+        </div>
+
+        <!-- Section: CI/CD Integration -->
+        <div class="section">
+            <h2>CI/CD Integration for Continuous Recon</h2>
+<pre><code># GitHub Actions example (.github/workflows/recon.yml)
+name: Daily Recon
+on:
+  schedule:
+    - cron: '0 6 * * *'  # 毎日 6:00 UTC
+
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+          go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+          go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+      - name: Run recon
+        run: |
+          subfinder -dL domains.txt -silent | sort -u > current.txt
+          comm -13 previous.txt current.txt > new.txt
+          cat new.txt | httpx -silent | nuclei -t cves/ -severity high,critical
+      - name: Update baseline
+        run: cp current.txt previous.txt
+      - name: Commit results
+        run: |
+          git add .
+          git commit -m "recon: $(date +%Y-%m-%d)" || true
+          git push</code></pre>
+        </div>
+
+        <!-- Section: When to Automate -->
+        <div class="section">
+            <h2>Automate vs Manual: 判断基準</h2>
+
+            <div class="card">
+                <h3>自動化すべきもの</h3>
+                <ul>
+                    <li>Subdomain enumeration (定期実行、差分検知)</li>
+                    <li>Known CVE スキャン (nuclei templates)</li>
+                    <li>新規アセットの通知</li>
+                    <li>Port scanning + service detection</li>
+                    <li>Secret exposure チェック (定型パターン)</li>
+                </ul>
+            </div>
+
+            <div class="card" style="margin-top:1rem;">
+                <h3>手動であるべきもの</h3>
+                <ul>
+                    <li>Business logic の理解と悪用</li>
+                    <li>Authorization bypass の creative な手法</li>
+                    <li>Chain attack (複数の低severity を組み合わせて高impact)</li>
+                    <li>Race condition のタイミング調整</li>
+                    <li>新しい attack vector の発見</li>
+                </ul>
+            </div>
+
+            <div class="callout">
+                <div class="callout-title">原則: Automate the boring, hunt the interesting</div>
+                <p>
+                    自動化は「既知パターンの大量適用」に使う。
+                    「未知の脆弱性の発見」は人間の創造性が必要。
+                    自動化で attack surface を広げ、manual hunting で深く掘る。
+                </p>
+            </div>
+        </div>
+
+        <!-- Section: Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Nuclei template は資産</strong> — 一度書けば全ターゲットに再利用可能</li>
+                    <li><strong>差分検知が鍵</strong> — 新規 subdomain/endpoint を最速で把握する</li>
+                    <li><strong>通知は即座に</strong> — 競合より先に report するには自動通知が必須</li>
+                    <li><strong>Custom script は特化型</strong> — 汎用ツールで検出できないロジック bug に対応</li>
+                    <li><strong>自動化の限界を知る</strong> — creative な hunting は人間にしかできない</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Section: References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://github.com/projectdiscovery/nuclei" target="_blank">nuclei - GitHub</a></li>
+                <li><a href="https://github.com/projectdiscovery/nuclei-templates" target="_blank">nuclei-templates - GitHub</a></li>
+                <li><a href="https://github.com/projectdiscovery/notify" target="_blank">notify - GitHub</a></li>
+                <li><a href="https://docs.projectdiscovery.io/templates/introduction" target="_blank">Nuclei Template Guide</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete button -->
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="36-auto" onclick="toggleComplete('36-auto')">Mark Complete</button>
+        </div>
+
+        <!-- Navigation -->
+        <div class="page-nav">
+            <a href="35-cloud-misconfig.html">&larr; 前: Cloud Misconfiguration</a>
+            <a href="37-scope-management.html">次: Scope Management &amp; Prioritization &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

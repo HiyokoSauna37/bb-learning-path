@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Slop Avoidance - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .pattern-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.2rem; margin-bottom:1rem; }
+        .pattern-card h4 { color:var(--red); margin-bottom:0.5rem; }
+        .case-card { background:var(--surface); border-left:3px solid var(--yellow); border-radius:0 8px 8px 0; padding:1rem 1.2rem; margin-bottom:1rem; }
+        .gate-box { background:var(--green-dim); border:1px solid var(--green); border-radius:8px; padding:1rem; margin:1rem 0; }
+        .audit-box { background:var(--purple-dim); border:1px solid var(--purple); border-radius:8px; padding:1rem; margin:1rem 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 5: Operations &gt; AI Slop Avoidance
+        </div>
+
+        <div class="page-header">
+            <h1>AI Slop Avoidance</h1>
+            <p class="subtitle">
+                AI-assisted な脆弱性報告が「実際には exploitable でない」パターンを認識し、
+                自分のレポートがそうならないための prevention framework。
+                mei-bb で 6件撤回した経験から体系化。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-casestudy">Case Study</span>
+                <span class="tag tag-theory">Theory</span>
+            </div>
+        </div>
+
+        <!-- What is AI Slop -->
+        <div class="section">
+            <h2>AI Slop とは</h2>
+            <p>AI（LLM）を使って脆弱性調査を行った際に、コード上は脆弱に「見える」が実際には exploit できないパターンの報告。以下の特徴を持つ:</p>
+            <ul>
+                <li>コードの静的分析だけで「脆弱性あり」と判断（動的検証なし）</li>
+                <li>Security impact を推測で主張（実証なし）</li>
+                <li>環境依存を無視（OS, runtime, configuration の差異）</li>
+                <li>Product の design intent を理解せずに「バグ」と判断</li>
+                <li>Simulation のみで PoC とし、実 runtime でのテストを省略</li>
+            </ul>
+            <p>BB platform (特に huntr) では AI slop 報告が急増しており、triage team の負荷が上がっている。これは hunter の信頼を損なう最大のリスク。</p>
+        </div>
+
+        <!-- Common Patterns -->
+        <div class="section">
+            <h2>AI Slop の典型パターン</h2>
+
+            <div class="pattern-card">
+                <h4>Pattern 1: Structural Evidence Only</h4>
+                <p>コードに <code>eval()</code> や <code>exec()</code> がある → 「RCE 可能」と主張。しかし入力が sanitize されている、あるいは到達不可能なコードパス。</p>
+            </div>
+
+            <div class="pattern-card">
+                <h4>Pattern 2: Wrong OS/Environment</h4>
+                <p>Windows でのみ再現する path traversal を Linux production に対して報告。DNS resolver の挙動が OS 依存なのに cross-platform claim。</p>
+            </div>
+
+            <div class="pattern-card">
+                <h4>Pattern 3: Simulation-Only PoC</h4>
+                <p>Python script で「こういう入力を送ったらこういう結果になるはず」とシミュレーション。実 runtime でのテストなし。Mock/stub で通しただけ。</p>
+            </div>
+
+            <div class="pattern-card">
+                <h4>Pattern 4: Impact Speculation</h4>
+                <p>「This could potentially lead to...」で始まる impact claim。「もし X が Y に使われていれば Z になる」。条件が多すぎて現実に成立しない。</p>
+            </div>
+
+            <div class="pattern-card">
+                <h4>Pattern 5: By-Feature (Design Intent)</h4>
+                <p>Product の collaboration/sharing model から自然に導かれる behavior を「脆弱性」と報告。Shared view でユーザ一覧が見える = designed behavior。</p>
+            </div>
+
+            <div class="pattern-card">
+                <h4>Pattern 6: Admin/Debug Config Dependency</h4>
+                <p>Admin override や debug flag を有効にした状態で PoC を作成。Production default では再現しない。</p>
+            </div>
+        </div>
+
+        <!-- mei-bb Cases -->
+        <div class="section">
+            <h2>mei-bb 撤回事例</h2>
+
+            <div class="case-card">
+                <strong>vercel/ai: trailing-dot DNS bypass</strong>
+                <p>Windows の DNS resolver でのみ再現。Linux (production) では trailing dot は正常に resolve。Cross-OS verify を怠った。</p>
+            </div>
+
+            <div class="case-card">
+                <strong>Uber Firebase: test environment</strong>
+                <p>テスト環境の Firebase rule が open だったが、production とは完全に分離。Production impact = 0。</p>
+            </div>
+
+            <div class="case-card">
+                <strong>Pyroscope: by-feature</strong>
+                <p>Auth doc を読まずに auth bypass を主張。実際には bogus credential でもアクセスできる = auth が元々ない endpoint だった。</p>
+            </div>
+
+            <div class="case-card">
+                <strong>immich: design ambiguous</strong>
+                <p>Shared album で photo metadata が見える。Privacy concern ではあるが、vendor が意図的に設計した behavior の可能性が高く、spec が曖昧。</p>
+            </div>
+
+            <div class="case-card">
+                <strong>vercel/workflow: predictable token</strong>
+                <p>runId が predictable に「見えた」が、実際は CSPRNG 由来。Seed material の generator を確認せず「公開情報から予測可能」と主張。</p>
+            </div>
+
+            <div class="case-card">
+                <strong>NocoDB: shared-view users[]</strong>
+                <p>Shared view でユーザリストが API response に含まれる。Product の collaboration model 上は自然な behavior。By-feature。</p>
+            </div>
+        </div>
+
+        <!-- Prevention Gates -->
+        <div class="section">
+            <h2>Prevention Framework</h2>
+
+            <div class="gate-box">
+                <h4>bb-aislop-gate scan</h4>
+                <p>Submit 前に自動スキャン。HOLD = submit-block。25+ の weakness pattern (W1-W25) を機械的に検出。</p>
+                <ul>
+                    <li>W1: Speculation-based severity claim</li>
+                    <li>W8: Trust model violation</li>
+                    <li>W11: Severity escalation without verification</li>
+                    <li>W13/W14: Primitive detection without sink demo</li>
+                    <li>W19: Quality defect framed as security</li>
+                    <li>W20: Intentional CORS design</li>
+                    <li>W25: Advisory wording over-interpretation</li>
+                </ul>
+            </div>
+
+            <div class="gate-box">
+                <h4>bb-fp-detector</h4>
+                <p>False positive detector。環境差異 (OS, config, runtime) による非再現を事前検出。</p>
+            </div>
+
+            <div class="gate-box">
+                <h4>End-to-End Verification Rule</h4>
+                <p><strong>Sink で actual exploit demo するまで <code>verified_poc</code> と主張禁止。</strong></p>
+                <ul>
+                    <li>Echo upstream / scope-check pass / raw forward 確認だけでは不十分</li>
+                    <li>「primitive を検出した」だけでは submit 不可</li>
+                    <li>最終的な impact (data leak, state change, code execution) を実機で示す</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 4-Axis Pre-Submit Audit -->
+        <div class="section">
+            <h2>4-Axis Pre-Submit Audit</h2>
+
+            <div class="audit-box">
+                <p>Submit 直前に以下の 4 軸で self-audit を実施:</p>
+                <ol>
+                    <li><strong>Trust Model:</strong> 脆弱性の前提が product の trust model と整合するか</li>
+                    <li><strong>Spec Compliance:</strong> Report の claim が仕様に violation しているか (docs 未記載だけでは bug 認定禁止)</li>
+                    <li><strong>Strictly Weaker:</strong> PoC 環境が production より strictly weaker な security posture でないか</li>
+                    <li><strong>PoC Env Fidelity:</strong> PoC 環境が production default と一致するか (admin override / debug flag 依存チェック)</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- Intigriti AI Disclosure -->
+        <div class="section">
+            <h2>Intigriti AI Disclosure</h2>
+            <p>Intigriti は 2026-03 の CoC 更新で AI 使用の disclosure を必須化:</p>
+            <ul>
+                <li><strong>When:</strong> どのフェーズで AI を使ったか (recon, analysis, PoC, report writing)</li>
+                <li><strong>How:</strong> 具体的にどのツール/モデルをどのように使ったか</li>
+                <li>違反 = report close / platform 除外</li>
+                <li>AI 使用自体は禁止されていない。透明性が求められる</li>
+            </ul>
+        </div>
+
+        <!-- Self-Check Checklist -->
+        <div class="section">
+            <h2>AI Slop Self-Check Checklist</h2>
+            <p>Submit 前に以下を自問。1つでも No なら submit しない:</p>
+            <ol>
+                <li>実 runtime (Docker/VM/live instance) で PoC を実行したか？</li>
+                <li>PoC の結果として actual impact (data leak, state change) を示せるか？</li>
+                <li>Production default の設定で再現するか？ (admin flag / debug mode 依存でないか)</li>
+                <li>Attack chain の各 step が attacker の base capability で実現可能か？</li>
+                <li>Product の auth docs / design docs を読んだか？</li>
+                <li>同じ PoC を Linux production 環境で実行しても再現するか？</li>
+                <li>「by-feature」(設計上意図された動作) でないと確信があるか？</li>
+                <li>Seed material / token の generator を確認したか？ (CSPRNG なら predictable ではない)</li>
+            </ol>
+        </div>
+
+        <!-- Navigation -->
+        <div class="section" style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border); padding-top:1.5rem;">
+            <a href="53-platform-ops.html">&larr; Prev: Platform Operations</a>
+            <button class="complete-btn" data-module-id="54-aislop" onclick="toggleComplete('54-aislop')">Mark Complete</button>
+            <a href="55-signal-reputation.html">Next: Signal &amp; Reputation &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

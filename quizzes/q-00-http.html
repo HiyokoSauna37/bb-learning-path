@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTTP Fundamentals - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; HTTP Fundamentals
+        </div>
+        <div class="page-header">
+            <h1>HTTP Fundamentals</h1>
+            <p class="subtitle">5 questions - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../modules/00-http-fundamentals.html">&larr; Module に戻る</a>
+            <a href="../quiz.html">Quiz 一覧 &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-00-http', [
+        {
+            question: "認証済みだがリソースへのアクセス権限がないことを示すHTTPステータスコードはどれか？",
+            options: [
+                "401 Unauthorized",
+                "403 Forbidden",
+                "404 Not Found",
+                "409 Conflict"
+            ],
+            answer: 1,
+            explanation: "403 Forbiddenは「認証はされているが、そのリソースへのアクセス権限がない」ことを示す。401は「認証自体がされていない（または無効）」ことを示す。名前が紛らわしいが、401=未認証、403=未認可と覚える。"
+        },
+        {
+            question: "Password Reset Poisoning や Web Cache Poisoning で攻撃者が操作する HTTP ヘッダーはどれか？",
+            options: [
+                "User-Agent（サーバー側でフィルタリングに使われるため）",
+                "Host（サーバーがURLやリンクの生成に使用するため）",
+                "Referer（サーバーがリダイレクト先を決定するため）",
+                "X-Forwarded-For（IPベースのアクセス制御をバイパスできるため）"
+            ],
+            answer: 1,
+            explanation: "Hostヘッダーはサーバーがパスワードリセットリンクのドメインやキャッシュキーの生成に使う。攻撃者がHostを書き換えると、リセットメールに攻撃者のドメインが含まれたり(Password Reset Poisoning)、キャッシュが汚染されたり(Cache Poisoning)する。X-Forwarded-Forはアクセス制御bypass用で別の攻撃クラス。"
+        },
+        {
+            question: "Content-Typeヘッダーの切り替え（例：application/jsonからapplication/x-www-form-urlencoded）が攻撃に利用されるのは主にどのような場面か？",
+            options: [
+                "XSS攻撃でレスポンスの解釈を変えるため",
+                "CSRF攻撃でプリフライトリクエストを回避するため",
+                "SQLインジェクションでWAFのルールを回避するため",
+                "ディレクトリトラバーサルでファイルタイプ制限を回避するため"
+            ],
+            answer: 1,
+            explanation: "ブラウザはapplication/x-www-form-urlencoded、multipart/form-data、text/plainの3つのContent-Typeについてはプリフライト（OPTIONS）リクエストなしでクロスオリジンPOSTを送信できる。APIがapplication/jsonを期待しているが他のContent-Typeも受け入れる場合、攻撃者はこの切り替えによりCSRFが可能になる。"
+        },
+        {
+            question: "セキュリティの観点で、GETリクエストとPOSTリクエストの最も重要な違いは何か？",
+            options: [
+                "POSTはGETより暗号化が強い",
+                "GETのパラメータはURL・ログ・Refererヘッダーに残るため機密データが漏洩しやすい",
+                "GETリクエストはサーバーサイドの脆弱性を突けない",
+                "POSTリクエストはCSRF攻撃の対象にならない"
+            ],
+            answer: 1,
+            explanation: "GETパラメータはURLに含まれるため、ブラウザ履歴、サーバーログ、プロキシログ、Refererヘッダーに記録される。これがセキュリティ上の最大の違い。POSTも暗号化はHTTPS依存であり、CSRF攻撃の対象になり得る。GETでもSQLi等のサーバーサイド攻撃は可能。"
+        },
+        {
+            question: "ペネトレーションテスト中にHTTP 500 Internal Server Errorを受け取った場合、攻撃者にとって最も重要な意味は何か？",
+            options: [
+                "サーバーがダウンしており攻撃は失敗した",
+                "入力がバックエンドの処理ロジックに到達し、未処理のエラーを引き起こした",
+                "WAFが攻撃を検知してブロックした",
+                "レート制限に達したため一定時間待つ必要がある"
+            ],
+            answer: 1,
+            explanation: "500エラーは入力がWAFやフロントエンドの検証を通過し、バックエンドのアプリケーションロジックに到達したことを意味する。これはバックエンドが入力を適切に処理できなかったシグナルであり、SQLi・コマンドインジェクション等の脆弱性が存在する可能性の重要な指標となる。"
+        }
+    ]);
+    </script>
+</body>
+</html>

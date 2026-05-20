@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Python (Flask/Django/FastAPI) Audit - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 2: Source Code Audit &gt; Python Security Audit
+        </div>
+
+        <div class="page-header">
+            <h1>Python (Flask/Django/FastAPI) Audit</h1>
+            <p class="subtitle">
+                Python Web フレームワーク固有の脆弱性パターン。SSTI, Pickle Deserialization, ORM Bypass, subprocess injection を中心に。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Jinja2 Server-Side Template Injection (SSTI)</h2>
+            <p>Flask のデフォルトテンプレートエンジン Jinja2 で、ユーザ入力がテンプレートとして解釈される場合に発生。</p>
+
+<pre><code># 危険: render_template_string にユーザ入力
+from flask import render_template_string, request
+
+@app.route('/greet')
+def greet():
+    name = request.args.get('name', 'World')
+    return render_template_string(f'&lt;h1&gt;Hello {name}&lt;/h1&gt;')
+
+# Attack: ?name={{7*7}} → "Hello 49"
+# RCE: ?name={{config.__class__.__init__.__globals__['os'].popen('id').read()}}</code></pre>
+
+            <h3>SSTI Detection (grep)</h3>
+<pre><code>rg -n "render_template_string\(" --type py
+rg -n "Template\(.*request\." --type py
+rg -n "Environment\(.*\.from_string\(" --type py
+rg -n "format\(.*request\." --type py  # f-string injection variant</code></pre>
+
+            <h3>安全/危険の境界</h3>
+            <table>
+                <thead><tr><th>パターン</th><th>安全性</th><th>理由</th></tr></thead>
+                <tbody>
+                    <tr><td><code>render_template('tpl.html', name=input)</code></td><td>安全</td><td>template は固定ファイル、input は変数として渡される</td></tr>
+                    <tr><td><code>render_template_string(input)</code></td><td>危険</td><td>input 自体が template として解釈される</td></tr>
+                    <tr><td><code>render_template_string(f"...{input}...")</code></td><td>危険</td><td>f-string 展開後に template parse される</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Django ORM Bypass</h2>
+            <p>Django ORM は基本的に安全だが、<code>extra()</code>, <code>raw()</code>, <code>RawSQL()</code> は SQL Injection のリスクがある。</p>
+
+<pre><code># 危険: raw() with string formatting
+User.objects.raw(f"SELECT * FROM users WHERE name = '{name}'")
+
+# 危険: extra() with user input
+queryset.extra(where=[f"name = '{request.GET['name']}'"])
+
+# 危険: annotate with RawSQL
+from django.db.models.expressions import RawSQL
+queryset.annotate(val=RawSQL(f"SELECT {user_input} FROM ..."))
+
+# 安全: parameterized
+User.objects.raw("SELECT * FROM users WHERE name = %s", [name])</code></pre>
+
+            <h3>grep パターン</h3>
+<pre><code>rg -n "\.raw\(|\.extra\(|RawSQL\(" --type py
+rg -n "cursor\.execute\(.*format\(|cursor\.execute\(.*%" --type py
+rg -n "connection\.cursor\(\)" --type py</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Pickle / YAML Deserialization</h2>
+
+            <h3>Pickle (RCE 直結)</h3>
+<pre><code>import pickle
+
+# 危険: untrusted data を pickle.loads
+data = request.get_data()
+obj = pickle.loads(data)  # RCE!
+
+# Attack: __reduce__ method で任意コマンド実行
+import os
+class Exploit:
+    def __reduce__(self):
+        return (os.system, ('id',))</code></pre>
+
+            <h3>YAML unsafe_load</h3>
+<pre><code>import yaml
+
+# 危険: yaml.load without Loader specification (PyYAML &lt; 6.0)
+config = yaml.load(request.data)
+
+# 危険: yaml.unsafe_load (明示的に unsafe)
+config = yaml.unsafe_load(user_input)
+
+# 安全: SafeLoader
+config = yaml.safe_load(user_input)
+config = yaml.load(user_input, Loader=yaml.SafeLoader)</code></pre>
+
+            <h3>grep パターン</h3>
+<pre><code>rg -n "pickle\.(loads|load)\(" --type py
+rg -n "yaml\.(load|unsafe_load)\(" --type py
+rg -n "yaml\.load\(" --type py  # Loader 指定の有無を確認
+rg -n "shelve\.open\(|marshal\.loads\(" --type py</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>subprocess / os Injection</h2>
+
+<pre><code># 危険: shell=True with user input
+import subprocess
+subprocess.run(f"git clone {url}", shell=True)
+
+# 危険: os.system
+import os
+os.system(f"ping {request.args['host']}")
+
+# 安全: shell=False (default) + list arguments
+subprocess.run(["git", "clone", url], shell=False)
+
+# 注意: shlex.quote は Linux 限定。Windows では別の対策が必要</code></pre>
+
+            <h3>grep パターン</h3>
+<pre><code>rg -n "subprocess\.(run|call|Popen|check_output)\(.*shell=True" --type py
+rg -n "os\.(system|popen|exec)\(" --type py
+rg -n "commands\.getoutput\(" --type py</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>os.path.join Bypass (Path Traversal)</h2>
+<pre><code>import os
+
+# 危険: absolute path で join をリセット
+base = "/app/uploads"
+filename = request.args['file']
+path = os.path.join(base, filename)
+
+# Attack: filename = "/etc/passwd"
+# os.path.join("/app/uploads", "/etc/passwd") → "/etc/passwd"
+# 先頭 / で base が無視される!
+
+# 対策: os.path.basename() で先にファイル名のみ抽出
+safe_name = os.path.basename(filename)
+path = os.path.join(base, safe_name)</code></pre>
+
+            <div class="callout danger">
+                <div class="callout-title">os.path.join の罠</div>
+                <p><code>os.path.join("base", "/absolute")</code> は <code>"/absolute"</code> を返す。<code>..</code> だけでなく absolute path による bypass にも注意。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Framework-Specific Issues</h2>
+
+            <h3>Flask</h3>
+            <ul>
+                <li><strong>Debug Mode</strong>: <code>app.run(debug=True)</code> — Werkzeug debugger で RCE (PIN bypass 可能)</li>
+                <li><strong>SECRET_KEY</strong>: ハードコードされた weak key &rarr; session cookie forgery</li>
+                <li><strong>send_file / send_from_directory</strong>: path traversal の sink</li>
+            </ul>
+
+            <h3>Django</h3>
+            <ul>
+                <li><strong>SECRET_KEY exposure</strong>: settings.py にハードコード &rarr; session/CSRF token forgery</li>
+                <li><strong>DEBUG = True in production</strong>: stack trace でソースコードが漏洩</li>
+                <li><strong>ALLOWED_HOSTS = ['*']</strong>: Host header injection</li>
+                <li><strong>@csrf_exempt</strong>: 不要な CSRF 保護除外</li>
+            </ul>
+
+            <h3>FastAPI</h3>
+            <ul>
+                <li><strong>Dependency Injection</strong>: <code>Depends()</code> の auth check 漏れ (Express middleware と同じ問題)</li>
+                <li><strong>Pydantic bypass</strong>: <code>model.dict()</code> で extra fields が通過する設定</li>
+                <li><strong>/docs, /redoc</strong>: production で OpenAPI docs が公開されている</li>
+            </ul>
+
+<pre><code># FastAPI auth 漏れパターン
+from fastapi import Depends
+
+async def get_current_user(token: str = Header()):
+    ...
+
+# 危険: dependency 付け忘れ
+@app.get("/admin/users")
+async def list_users():  # get_current_user が Depends されていない!
+    return db.get_all_users()</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>SQLAlchemy Raw Queries</h2>
+<pre><code>from sqlalchemy import text
+
+# 危険: f-string で query 構築
+result = db.execute(text(f"SELECT * FROM users WHERE name = '{name}'"))
+
+# 安全: parameterized
+result = db.execute(text("SELECT * FROM users WHERE name = :name"), {"name": name})</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>SSTI</strong>: <code>render_template_string</code> + user input = RCE。<code>render_template</code> (固定ファイル) なら安全</li>
+                    <li><strong>Pickle/YAML</strong>: untrusted data の deserialization は即 RCE。<code>yaml.safe_load</code> を必ず確認</li>
+                    <li><strong>os.path.join</strong>: absolute path 引数で base directory が無視される罠</li>
+                    <li><strong>Django ORM</strong>: <code>raw()</code>, <code>extra()</code>, <code>RawSQL()</code> のみ SQL injection risk</li>
+                    <li><strong>subprocess shell=True</strong> + user input = Command Injection</li>
+                    <li><strong>Framework config</strong>: SECRET_KEY, DEBUG, ALLOWED_HOSTS は即チェックする低コスト監査項目</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="22-python" onclick="toggleComplete('22-python')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="21-nodejs-audit.html">&larr; 前: Node.js Audit</a>
+            <a href="23-go-audit.html">次: Go Audit &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

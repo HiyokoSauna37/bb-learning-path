@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Review Methodology - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 2: Source Code Audit &gt; Code Review Methodology
+        </div>
+
+        <div class="page-header">
+            <h1>Code Review Methodology</h1>
+            <p class="subtitle">
+                セキュリティ視点のソースコードレビュー手法。Sink-to-Source / Source-to-Sink / Feature-based の3アプローチと、Trust Boundary の特定技術。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>始める前に: コードを手に入れる</h2>
+            <p>OSS のコードレビューを初めてやる場合、まず以下の手順でコードを入手し、構造を理解する:</p>
+            <ol>
+                <li><strong>リポジトリを clone する</strong>: <code>git clone https://github.com/org/repo && cd repo</code></li>
+                <li><strong>言語とフレームワークを確認</strong>: <code>package.json</code> (Node.js) / <code>requirements.txt</code> (Python) / <code>go.mod</code> (Go) を見る</li>
+                <li><strong>エントリーポイントを探す</strong>: <code>main</code> スクリプト、<code>server.js</code>、<code>app.py</code> など — ここからアプリが起動する</li>
+                <li><strong>ルート定義を探す</strong>: <code>routes/</code>, <code>controllers/</code>, <code>src/api/</code> — HTTP endpoint の定義場所</li>
+                <li><strong>認証 middleware を探す</strong>: <code>middleware/</code>, <code>auth.js</code>, <code>decorators.py</code> — ここが壊れていれば auth bypass</li>
+            </ol>
+            <p>この5ステップでアプリの「形」が掴めたら、以下の3つのアプローチで脆弱性を探す。</p>
+        </div>
+
+        <div class="section">
+            <h2>3つのアプローチ</h2>
+
+            <h3>1. Sink-to-Source (Dangerous Function Tracing)</h3>
+            <p>最も効率的なアプローチ。危険な関数 (sink) を先に見つけ、そこに到達するユーザ入力 (source) を逆方向に追跡する。</p>
+            <ul>
+                <li>まず codebase 全体から sink を grep で列挙</li>
+                <li>各 sink に対して「ユーザ制御可能な入力が到達するか」を判定</li>
+                <li>sanitization / validation が途中に存在するか確認</li>
+            </ul>
+            <div class="callout success">
+                <div class="callout-title">huntr OSS 調査では最も高 ROI</div>
+                <p>大規模 codebase でもsinkの数は有限。全 route を読む必要がなく、高 severity な脆弱性に直接到達できる。</p>
+            </div>
+
+            <h3>2. Source-to-Sink (Input Tracing)</h3>
+            <p>ユーザ入力の entry point から始めて、データがどこまで到達するかを追跡する。</p>
+            <ul>
+                <li>HTTP request handlers (req.body, req.params, req.query)</li>
+                <li>File uploads, WebSocket messages</li>
+                <li>各入力がどの関数に渡されるか順に追跡</li>
+                <li>途中の validation/sanitization の有無と強度を評価</li>
+            </ul>
+
+            <h3>3. Feature-based Review</h3>
+            <p>機能単位で監査する。認証、ファイルアップロード、API キー管理など、高リスク機能を優先。</p>
+            <ul>
+                <li>認証/認可: auth middleware, role check, session management</li>
+                <li>ファイル操作: upload, download, path construction</li>
+                <li>外部通信: webhook, SSRF-prone HTTP calls</li>
+                <li>Admin 機能: privilege escalation の起点</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Trust Boundary の特定</h2>
+            <p>Trust boundary = 信頼レベルが変わる境界。この境界を越えるデータフローに脆弱性が潜む。</p>
+
+            <table>
+                <thead><tr><th>境界</th><th>概要</th><th>典型的な脆弱性</th></tr></thead>
+                <tbody>
+                    <tr><td>Client &rarr; Server</td><td>全 HTTP input は untrusted</td><td>Injection, XSS, SSRF</td></tr>
+                    <tr><td>User &rarr; Admin</td><td>Role/権限の境界</td><td>Privilege Escalation, IDOR</td></tr>
+                    <tr><td>App &rarr; DB</td><td>Query 構築の境界</td><td>SQL/NoSQL Injection</td></tr>
+                    <tr><td>App &rarr; OS</td><td>System command 実行</td><td>Command Injection, Path Traversal</td></tr>
+                    <tr><td>Service &rarr; Service</td><td>Internal API 間通信</td><td>SSRF, Token Leakage</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Grep Patterns for Common Sinks</h2>
+            <p>最初にこれらのパターンで codebase を sweep し、危険箇所を洗い出す。</p>
+
+<pre><code># Command Injection sinks
+rg -n "exec\(|execSync\(|spawn\(|system\(|popen\(" --type js
+rg -n "child_process" --type js
+rg -n "subprocess\.|os\.system\(|os\.popen\(" --type py
+
+# Code Execution sinks
+rg -n "eval\(|Function\(|setTimeout\(.*," --type js
+rg -n "exec\(|compile\(" --type py
+rg -n "vm\.runInNewContext\(" --type js
+
+# SQL/NoSQL Injection sinks
+rg -n "query\(.*\+" --type js
+rg -n "\\\$where|\\\$regex|\\\$gt|\\\$ne" --type js
+rg -n "raw\(|execute\(" --type py
+
+# Deserialization sinks
+rg -n "unserialize\(|deserialize\(" --type js
+rg -n "pickle\.loads\(|yaml\.load\(" --type py
+rg -n "Marshal\.load\(" --type ruby
+
+# Path Traversal sinks
+rg -n "path\.join\(.*req\.|readFileSync\(|createReadStream\(" --type js
+rg -n "os\.path\.join\(.*request\." --type py
+
+# XSS / Template Injection sinks
+rg -n "innerHTML|dangerouslySetInnerHTML|v-html" --type js
+rg -n "\.render\(|render_template_string\(" --type py
+rg -n "<%[-=].*\|" --glob "*.ejs"</code></pre>
+
+            <div class="callout warning">
+                <div class="callout-title">False Positive に注意</div>
+                <p>grep hit = 脆弱性ではない。hit した箇所の input が user-controlled かどうか、途中に sanitization があるかを必ず確認する。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Data Flow Tracing テクニック</h2>
+
+            <h3>手動トレーシング</h3>
+            <ol>
+                <li>Entry point を特定 (route handler の引数)</li>
+                <li>変数の代入・変換を追跡 (rename, destructure, spread)</li>
+                <li>関数呼び出しを跨いで追跡 (caller &rarr; callee)</li>
+                <li>Sink に到達するか判定</li>
+                <li>途中の validation/sanitization を bypass できるか検討</li>
+            </ol>
+
+            <h3>追跡を阻むパターン</h3>
+            <ul>
+                <li><strong>Dynamic dispatch</strong>: <code>obj[method]()</code> — 実行時に決まる</li>
+                <li><strong>Middleware chain</strong>: req object が複数 middleware で変更される</li>
+                <li><strong>ORM abstraction</strong>: Raw query か parameterized か判別困難</li>
+                <li><strong>Config-driven routing</strong>: route 定義がコードでなく設定ファイル</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>ツール</h2>
+
+            <h3>grep / ripgrep</h3>
+            <p>最も基本的かつ強力。上記パターンでの sweep に使用。</p>
+
+            <h3>Semgrep</h3>
+<pre><code># Semgrep rule 例: eval with user input
+# semgrep --config "p/javascript" --config "p/security-audit" .
+# Custom rule:
+rules:
+  - id: eval-user-input
+    patterns:
+      - pattern: eval($X)
+      - pattern-not: eval("...")
+    message: "Possible code injection via eval"
+    severity: ERROR
+    languages: [javascript]</code></pre>
+
+            <h3>CodeQL (概要)</h3>
+            <ul>
+                <li>GitHub が提供する semantic code analysis engine</li>
+                <li>Source-Sink のデータフローを自動追跡</li>
+                <li>GitHub Advanced Security で自動実行 or ローカル CLI</li>
+                <li>学習コストは高いが、大規模 codebase での漏れ防止に有効</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>実践的 Workflow: OSS Target に対する初回 Audit</h2>
+
+            <h3>Step 1: Repository Structure 把握 (5分)</h3>
+<pre><code># プロジェクト構造の把握
+find . -name "*.js" -o -name "*.py" -o -name "*.go" | head -50
+cat package.json  # dependencies, scripts 確認
+ls routes/ controllers/ middleware/ src/api/</code></pre>
+
+            <h3>Step 2: Sink Sweep (10分)</h3>
+            <p>上記の grep patterns で全 sink を列挙。結果をファイルに保存。</p>
+<pre><code>rg -n "exec\(|eval\(|system\(|spawn\(" --type js > /tmp/sinks.txt
+rg -n "\.query\(.*\+|\.raw\(" --type js >> /tmp/sinks.txt
+rg -n "path\.join\(.*req\." --type js >> /tmp/sinks.txt
+wc -l /tmp/sinks.txt  # hit 数を確認</code></pre>
+
+            <h3>Step 3: Auth Middleware 把握 (5分)</h3>
+<pre><code># auth middleware の名前と適用状況
+rg -n "module\.exports" middleware/
+rg -n "router\.(get|post|put|delete)" routes/ | grep -v authMiddleware</code></pre>
+
+            <h3>Step 4: 優先度付け (5分)</h3>
+            <p>Hit 数が多い場合、以下の順で deep dive:</p>
+            <ol>
+                <li>Auth bypass (middleware 欠落) — 最も高 severity</li>
+                <li>Injection (exec/eval + user input) — RCE 直結</li>
+                <li>SSRF (HTTP client + user URL) — internal access</li>
+                <li>Path Traversal (file ops + user input) — data leak</li>
+                <li>IDOR (authorization check 欠如) — data access</li>
+            </ol>
+
+            <h3>Step 5: Deep Dive + PoC (残り時間)</h3>
+            <p>優先度順に1つずつ data flow を trace し、exploitable か判定。PoC curl を作成。</p>
+
+            <div class="callout success">
+                <div class="callout-title">Time Budget の目安</div>
+                <p>新規 target の初回 audit: 約 2-4 時間。Sink sweep + auth audit で 30 分、残りを deep dive に使う。1 session で finding 0 なら target を変える判断も重要。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Sink-to-Source</strong> が OSS audit で最も効率的 — 危険関数を grep で列挙し、逆方向にトレース</li>
+                    <li><strong>Trust Boundary</strong> を意識し、境界を越えるデータフローに集中する</li>
+                    <li><strong>grep sweep</strong> で全 sink を列挙してから深掘り (広く浅く &rarr; 狭く深く)</li>
+                    <li><strong>False Positive 排除</strong>: hit = vuln ではない。入力制御可能性 + sanitization 有無を必ず確認</li>
+                    <li>ツールは補助。最終的には<strong>コードを読む力</strong>が決め手</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="20-review" onclick="toggleComplete('20-review')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="1b-cors-misconfig.html">&larr; 前: CORS Misconfiguration</a>
+            <a href="21-nodejs-audit.html">次: Node.js Audit &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

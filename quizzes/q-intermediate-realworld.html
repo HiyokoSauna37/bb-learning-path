@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-World Judgment Calls (中級) - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; Real-World Judgment Calls (中級)
+        </div>
+        <div class="page-header">
+            <h1>Real-World Judgment Calls (中級)</h1>
+            <p class="subtitle">5 questions - 中級 - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../quiz.html">&larr; Quiz 一覧</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-int-realworld', [
+        {
+            question: "ターゲットでOpen Redirectを発見。プログラムポリシーに「Open Redirect = Informative unless chained with another vulnerability」と記載。あなたの次のアクションは？",
+            options: [
+                "Informativeでも報告しておく（ポートフォリオの実績になるため）",
+                "OAuth認可フローとの組み合わせでtoken窃取が可能か検証し、チェーン可能なら報告する",
+                "他のバグを探しに行く（Open Redirect単体では価値がないため）",
+                "プログラムに問い合わせて、Open Redirectの定義を確認する"
+            ],
+            answer: 1,
+            explanation: "プログラムが「chained unless」と明記している以上、チェーンの試行が正解。Open RedirectはOAuthフロー（redirect_uri manipulation）、SSO callback、メール内リンクのtoken窃取など、多数のチェーンパターンがある。OAuth tokenの窃取に成功すればMedium~High評価。単体報告はSignal低下の原因になり、無視は機会損失。"
+        },
+        {
+            question: "脆弱性を発見したが、GHSAを確認すると5日前に同じ根本原因のCVEが公開されている。この状況でのベストアクションは？",
+            options: [
+                "dupの可能性が高いため報告しない",
+                "修正が不完全でないか、同じコードベース内のsibling pathに同じパターンがないか調査する",
+                "急いでそのまま報告する（先着優先のため）",
+                "CVEの詳細を読み、自分の発見と完全に同一か確認してから判断する"
+            ],
+            answer: 1,
+            explanation: "5日前のCVEがあるということは既に報告済みの可能性が高い。しかし最大のチャンスは「incomplete fix variant」の調査。修正パッチを読み、同じ脆弱パターンが別のパス・別のパラメータ・別の関数に残っていないか確認する。同じroot causeでもcode pathが異なれば別のバグとして認められる。急いで同一バグを報告するとdupでSignal下がるリスク。"
+        },
+        {
+            question: "SSRFを発見し、http://localhost:8080 にリクエストを送信できた。しかし返ってきたのは外部からもアクセス可能な同じパブリックページの内容だった。この発見は報告すべきか？",
+            options: [
+                "はい - SSRFの存在自体が脆弱性であり、localhostに到達できることが証明されている",
+                "いいえ - 内部のみのデータ・サービスへのアクセスを証明できていないため、実質的なインパクトがない",
+                "はい - ただし「将来的にinternal serviceが追加された場合のリスク」として報告する",
+                "Cloud metadata (169.254.169.254) にアクセスできるかだけ追加テストし、できなければ報告しない"
+            ],
+            answer: 1,
+            explanation: "SSRFで到達できても、パブリックに同じコンテンツが取得できるなら実質的なインパクトはゼロ。BBではdemonstratable impactが必要。localhostの同じ公開ページを取得しただけでは「攻撃者が直接アクセスできない内部データへの到達」が証明されない。クラウドメタデータ、内部API、非公開ポートなど、公開では取得不能なデータへのアクセスを証明する必要がある。"
+        },
+        {
+            question: "ターゲットがGraphQL APIを使用しているが、Introspectionクエリが無効化されている（__schema queryが403を返す）。次のステップとして最も効果的なのは？",
+            options: [
+                "GraphQLの利用を諦め、REST APIエンドポイントの調査に切り替える",
+                "総当たりでよくあるQuery/Mutation名を試す（users, posts, admin等）",
+                "Clairvoyance等のツールでfield suggestion（typoによるサジェスト機能）を利用してスキーマを再構築する",
+                "Burp Suiteの既存リクエストからQuery名を抽出し、それのみを対象にする"
+            ],
+            answer: 2,
+            explanation: "多くのGraphQL実装は、無効なフィールド名を送ると「Did you mean X?」のサジェストを返す。Clairvoyance等のツールはこの挙動を利用して、1文字ずつ候補を絞り込みスキーマを再構築する。introspection無効化はセキュリティ対策として不十分であることが多い。Burpの既存リクエスト調査は補助的には有効だが、網羅性が低い。"
+        },
+        {
+            question: "Critical severityのRCEを発見したが、そのプログラムにはバウンティ（報奨金）がない。報告すべきか？",
+            options: [
+                "報告しない - 無報酬の仕事は時間の無駄",
+                "報告する - Signal/Reputation蓄積、ポートフォリオ構築、将来のプライベート招待につながる",
+                "報告はせず、ブログ記事にして技術力をアピールする",
+                "ベンダーに直接コンタクトし、報酬を交渉する"
+            ],
+            answer: 1,
+            explanation: "BBでの評価はSignal（解決率）とReputation（影響度）の蓄積で決まる。Criticalの発見は特にSignalを大きく上げ、プライベートプログラム（高額報酬）への招待につながる。また、コミュニティへの貢献として評価される。ブログに書くのは修正前にやるとirresponsible disclosureになる。ベンダー直接交渉はextortionと見なされるリスクがある。"
+        }
+    ]);
+    </script>
+</body>
+</html>

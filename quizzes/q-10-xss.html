@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cross-Site Scripting (XSS) - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; Cross-Site Scripting (XSS)
+        </div>
+        <div class="page-header">
+            <h1>Cross-Site Scripting (XSS)</h1>
+            <p class="subtitle">5 questions - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../modules/10-xss.html">&larr; Module に戻る</a>
+            <a href="../quiz.html">Quiz 一覧 &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-10-xss', [
+        {
+            question: "一般的に最も重大度が高いとされるXSSのタイプはどれか？",
+            options: [
+                "Reflected XSS（攻撃者が被害者にリンクをクリックさせる必要があるため）",
+                "Stored XSS（ペイロードが永続化され、ページを閲覧した全ユーザーに影響するため）",
+                "DOM-based XSS（クライアントサイドで発生し検知が困難なため）",
+                "Self-XSS（ユーザー自身の入力で発火するため）"
+            ],
+            answer: 1,
+            explanation: "Stored XSSは一度保存されると、そのページを表示したすべてのユーザーに自動的に影響する。攻撃者の操作なしに被害が拡大し続ける点で最も危険。Reflected XSSは被害者にリンクをクリックさせる必要があり、DOM XSSも同様。Self-XSSは他のユーザーに影響しないため通常は脆弱性として認められない。"
+        },
+        {
+            question: "ペイロード `\" onfocus=alert(1) autofocus=\"` が動作するHTMLコンテキストはどれか？",
+            options: [
+                "HTMLタグの間のテキストコンテキスト（<p>ここ</p>）",
+                "HTML属性値のコンテキスト（<input value=\"ここ\">）",
+                "JavaScriptの文字列リテラル内（var x = 'ここ';）",
+                "URLのクエリパラメータ内"
+            ],
+            answer: 1,
+            explanation: "このペイロードはまず\"で既存の属性値を閉じ、次にonfocusイベントハンドラを注入し、autofocusで自動的にフォーカスを当てて発火させる。これはHTML属性コンテキストでの注入で、属性値の引用符を壊して新しい属性を追加するテクニック。テキストコンテキストでは<script>やイベントハンドラ付きタグが必要。"
+        },
+        {
+            question: "DOM-based XSSがWAF（Web Application Firewall）で検知が困難な理由は何か？",
+            options: [
+                "DOM XSSはHTTPS通信でのみ発生し、WAFがHTTPSを復号できないため",
+                "ペイロードがURLフラグメント(#以降)等に含まれ、サーバーに送信されないため",
+                "DOM XSSはブラウザのバグを利用するため、WAFでは対応できないため",
+                "DOM XSSは必ずエンコードされた形で存在するため、WAFのパターンマッチに引っかからないため"
+            ],
+            answer: 1,
+            explanation: "DOM XSSの本質は、ペイロードがサーバーを経由せずにクライアントサイドで処理されること。URLのフラグメント(#以降)はサーバーに送信されないため、WAFはリクエストを検査できない。JavaScriptがlocation.hash等からデータを取得し、dangerouslySetInnerHTML/innerHTML等の危険なシンクに渡すことで発生する。"
+        },
+        {
+            question: "バグバウンティにおいて、XSSの報告がCriticalとLowの評価を分ける最大の要因は何か？",
+            options: [
+                "XSSのタイプ（Stored > Reflected > DOM）",
+                "影響のデモンストレーション（アカウント乗っ取り実証 vs alert()のみ）",
+                "影響を受けるユーザー数の推定",
+                "使用しているペイロードの複雑さ"
+            ],
+            answer: 1,
+            explanation: "BBではインパクトの実証が評価を決定的に左右する。alert(1)のみの報告は「XSSが存在する」ことしか示せず、Low〜Medium評価になりがち。一方、管理者のセッションCookie窃取→ATO、機密データの外部送信、ユーザーのパスワード変更等を実証すれば、同じXSSでもCritical評価になる。影響の具体的なデモが重要。"
+        },
+        {
+            question: "CSPでscript-src 'nonce-abc123'が設定されている場合、何から保護されるか？",
+            options: [
+                "nonce値を含むすべてのスクリプト実行",
+                "正しいnonce属性を持たないインラインスクリプトの実行",
+                "外部ドメインからのスクリプト読み込み（nonceに関係なく）",
+                "eval()やsetTimeout(string)の使用"
+            ],
+            answer: 1,
+            explanation: "nonce-basedCSPでは、正しいnonce属性（<script nonce=\"abc123\">）を持つスクリプトのみ実行が許可される。攻撃者がXSSで注入したスクリプトには正しいnonceがないため実行がブロックされる。nonceは毎リクエストで変更されるため予測不可能。ただし、外部スクリプトもnonce付きなら読み込み可能であり、strict-dynamicと組み合わせることが多い。"
+        }
+    ]);
+    </script>
+</body>
+</html>

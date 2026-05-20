@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="assets/style.css">
+    <style>
+        .hero {
+            text-align: center;
+            padding: 4rem 0 2rem;
+        }
+        .hero h1 {
+            font-size: 2.8rem;
+            background: linear-gradient(135deg, var(--accent), var(--purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+        .hero p { color: var(--text-muted); font-size: 1.1rem; }
+
+        .progress-overview {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem 2rem;
+            margin: 2rem 0 3rem;
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+        .progress-overview .label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+        .progress-overview .bar-outer {
+            flex: 1;
+            height: 10px;
+            background: var(--border);
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .progress-overview .bar-inner {
+            height: 100%;
+            background: linear-gradient(90deg, var(--green), var(--accent));
+            border-radius: 5px;
+            transition: width 0.4s;
+        }
+        .progress-overview .count {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--text);
+            white-space: nowrap;
+        }
+
+        .phase-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+        .phase-card:hover { border-color: var(--accent); }
+
+        .phase-card-header {
+            padding: 1.5rem 2rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .phase-badge {
+            width: 44px; height: 44px;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+        .phase-badge.lv0 { background: var(--green); color: #000; }
+        .phase-badge.lv1 { background: #2ea043; color: #fff; }
+        .phase-badge.lv2 { background: var(--yellow); color: #000; }
+        .phase-badge.lv3 { background: var(--orange); color: #fff; }
+        .phase-badge.lv4 { background: var(--red); color: #fff; }
+        .phase-badge.lv5 { background: var(--purple); color: #fff; }
+
+        .phase-card-header .title { font-size: 1.2rem; font-weight: 600; }
+        .phase-card-header .desc { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.2rem; }
+
+        .phase-modules {
+            padding: 1.5rem 2rem;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 0.8rem;
+        }
+
+        .mod-link {
+            display: block;
+            padding: 0.8rem 1rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: inherit;
+            text-decoration: none;
+            transition: all 0.15s;
+        }
+        .mod-link:hover {
+            border-color: var(--accent);
+            transform: translateY(-1px);
+            text-decoration: none;
+        }
+        .mod-link.completed {
+            border-color: var(--green);
+            background: rgba(63, 185, 80, 0.05);
+        }
+        .mod-link .mod-title { font-size: 0.9rem; font-weight: 500; margin-bottom: 0.2rem; }
+        .mod-link .mod-sub { font-size: 0.75rem; color: var(--text-muted); }
+
+        .sources-section {
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--border);
+        }
+        .source-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .source-item {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+        .source-item h4 { font-size: 0.85rem; color: var(--accent); margin-bottom: 0.3rem; }
+        .source-item p { font-size: 0.78rem; color: var(--text-muted); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <h1>Bug Bounty Learning Path</h1>
+            <p>from Zero to First Valid Report &mdash; 体系的ロードマップ</p>
+        </div>
+
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:1.5rem 2rem; margin-bottom:2rem;">
+            <h3 style="margin-bottom:0.8rem; font-size:1rem;">How to use this site</h3>
+            <ul style="color:var(--text-muted); font-size:0.9rem; padding-left:1.2rem;">
+                <li><strong>Phase 0 から順番に進める</strong>。各 Phase は前の Phase の知識を前提にしている</li>
+                <li><strong>分からない用語は Module 00 の用語集</strong>に戻る。初出の英語用語は日本語注釈付き</li>
+                <li><strong>Theory だけ読んで次に行かない</strong>。各モジュールの Practice / WSA Lab を必ず1つはやる</li>
+                <li><strong>Phase 2 まで完了すれば huntr で最初のレポートを書ける</strong>。それが最初のマイルストーン</li>
+                <li>"Mark Complete" ボタンで進捗を記録。ブラウザに保存されるのでいつでも再開可能</li>
+            </ul>
+            <div style="display:flex; gap:1rem; margin-top:1rem;">
+                <a href="timeline.html" style="padding:0.5rem 1rem; background:var(--accent); color:#000; border-radius:6px; font-size:0.85rem; font-weight:500; text-decoration:none;">30-Day Timeline</a>
+                <a href="quiz.html" style="padding:0.5rem 1rem; background:var(--purple); color:#fff; border-radius:6px; font-size:0.85rem; font-weight:500; text-decoration:none;">Quiz (理解度チェック)</a>
+                <a href="visuals.html" style="padding:0.5rem 1rem; background:var(--green); color:#000; border-radius:6px; font-size:0.85rem; font-weight:500; text-decoration:none;">Visual Reference (図解)</a>
+            </div>
+        </div>
+
+        <div class="progress-overview">
+            <span class="label">Progress</span>
+            <div class="bar-outer" data-progress-total="56">
+                <div class="bar-inner" data-progress-bar style="width:0%"></div>
+            </div>
+            <span class="count"><span data-progress-count>0</span> / 56</span>
+        </div>
+
+        <!-- Phase 0 -->
+        <div class="phase-card">
+            <div class="phase-card-header">
+                <div class="phase-badge lv0">0</div>
+                <div>
+                    <div class="title">Foundation &mdash; Web Security の土台</div>
+                    <div class="desc">HTTP, Browser Security Model, 認証メカニズム, ツールセットアップ</div>
+                </div>
+            </div>
+            <div class="phase-modules">
+                <a class="mod-link" href="modules/00-http-fundamentals.html" data-module-id="00-http">
+                    <div class="mod-title">HTTP Protocol Deep Dive</div>
+                    <div class="mod-sub">Request/Response構造, Headers, Methods, Status Codes, HTTP/2</div>
+                </a>
+                <a class="mod-link" href="modules/01-browser-security.html" data-module-id="01-browser">
+                    <div class="mod-title">Browser Security Model</div>
+                    <div class="mod-sub">SOP, CORS, CSP, Cookie属性, Referrer Policy</div>
+                </a>
+                <a class="mod-link" href="modules/02-authentication.html" data-module-id="02-auth">
+                    <div class="mod-title">Authentication & Session</div>
+                    <div class="mod-sub">Cookie Session, JWT, OAuth 2.0/OIDC, API Key, MFA</div>
+                </a>
+                <a class="mod-link" href="modules/03-encoding.html" data-module-id="03-enc">
+                    <div class="mod-title">Encoding & Serialization</div>
+                    <div class="mod-sub">URL encoding, Base64, JSON/XML parsing差異, Content-Type</div>
+                </a>
+                <a class="mod-link" href="modules/04-crypto-basics.html" data-module-id="04-crypto">
+                    <div class="mod-title">暗号の基礎 (for BB)</div>
+                    <div class="mod-sub">ハッシュ, 対称/非対称暗号, 署名検証, よくある実装ミス</div>
+                </a>
+                <a class="mod-link" href="modules/05-tools-setup.html" data-module-id="05-tools">
+                    <div class="mod-title">Tools Setup & Workflow</div>
+                    <div class="mod-sub">Burp Suite, Caido, DevTools, curl, httpie, 環境構築</div>
+                </a>
+                <a class="mod-link" href="modules/06-linux-networking.html" data-module-id="06-linux">
+                    <div class="mod-title">Linux & Networking Essentials</div>
+                    <div class="mod-sub">DNS, TCP/IP, TLS, iptables, Docker基礎</div>
+                </a>
+            </div>
+        </div>
+
+        <!-- Phase 1 -->
+        <div class="phase-card">
+            <div class="phase-card-header">
+                <div class="phase-badge lv1">1</div>
+                <div>
+                    <div class="title">Core Vulnerabilities &mdash; 脆弱性クラス別攻略</div>
+                    <div class="desc">OWASP Top 10 + 頻出クラスを1つずつ深堀り。WSA Lab で実践</div>
+                </div>
+            </div>
+            <div class="phase-modules">
+                <a class="mod-link" href="modules/10-xss.html" data-module-id="10-xss">
+                    <div class="mod-title">XSS (Cross-Site Scripting)</div>
+                    <div class="mod-sub">Reflected, Stored, DOM-based, mXSS, Dangling markup</div>
+                </a>
+                <a class="mod-link" href="modules/11-sqli.html" data-module-id="11-sqli">
+                    <div class="mod-title">SQL Injection</div>
+                    <div class="mod-sub">Union, Blind, Error-based, Second-order, ORM bypass</div>
+                </a>
+                <a class="mod-link" href="modules/12-ssrf.html" data-module-id="12-ssrf">
+                    <div class="mod-title">SSRF</div>
+                    <div class="mod-sub">Basic, Blind, DNS rebinding, Cloud metadata, Protocol smuggling</div>
+                </a>
+                <a class="mod-link" href="modules/13-idor.html" data-module-id="13-idor">
+                    <div class="mod-title">IDOR & Broken Access Control</div>
+                    <div class="mod-sub">Horizontal/Vertical escalation, UUID推測, GraphQL IDOR</div>
+                </a>
+                <a class="mod-link" href="modules/14-auth-bypass.html" data-module-id="14-authbypass">
+                    <div class="mod-title">Authentication Bypass</div>
+                    <div class="mod-sub">Middleware skip, Force browsing, Password reset flaws</div>
+                </a>
+                <a class="mod-link" href="modules/15-csrf.html" data-module-id="15-csrf">
+                    <div class="mod-title">CSRF</div>
+                    <div class="mod-sub">Token bypass, SameSite回避, Login CSRF, JSON CSRF</div>
+                </a>
+                <a class="mod-link" href="modules/16-file-upload.html" data-module-id="16-upload">
+                    <div class="mod-title">File Upload & Path Traversal</div>
+                    <div class="mod-sub">Web shell, Content-Type偽装, zip slip, symlink attack</div>
+                </a>
+                <a class="mod-link" href="modules/17-xxe.html" data-module-id="17-xxe">
+                    <div class="mod-title">XXE (XML External Entity)</div>
+                    <div class="mod-sub">Classic XXE, Blind XXE, SVG/DOCX経由, Parameter entity</div>
+                </a>
+                <a class="mod-link" href="modules/18-ssti.html" data-module-id="18-ssti">
+                    <div class="mod-title">SSTI (Server-Side Template Injection)</div>
+                    <div class="mod-sub">Jinja2, Twig, Freemarker, Pebble, Detection methodology</div>
+                </a>
+                <a class="mod-link" href="modules/19-business-logic.html" data-module-id="19-logic">
+                    <div class="mod-title">Business Logic Flaws</div>
+                    <div class="mod-sub">Race condition, Price manipulation, Workflow bypass, 2FA bypass</div>
+                </a>
+                <a class="mod-link" href="modules/1a-open-redirect.html" data-module-id="1a-redir">
+                    <div class="mod-title">Open Redirect & Header Injection</div>
+                    <div class="mod-sub">OAuth chain, CRLF injection, Host header attack</div>
+                </a>
+                <a class="mod-link" href="modules/1b-cors-misconfig.html" data-module-id="1b-cors">
+                    <div class="mod-title">CORS Misconfiguration</div>
+                    <div class="mod-sub">Origin reflection, null origin, subdomain trust, preflight bypass</div>
+                </a>
+            </div>
+        </div>
+
+        <!-- Phase 2 -->
+        <div class="phase-card">
+            <div class="phase-card-header">
+                <div class="phase-badge lv2">2</div>
+                <div>
+                    <div class="title">Source Code Audit &mdash; Whitebox (huntr)</div>
+                    <div class="desc">OSSソースコードから脆弱性を発見する。huntr.com を主戦場に</div>
+                </div>
+            </div>
+            <div class="phase-modules">
+                <a class="mod-link" href="modules/20-code-review-method.html" data-module-id="20-review">
+                    <div class="mod-title">Code Review Methodology</div>
+                    <div class="mod-sub">Sink-to-source, Trust boundary, Data flow tracing, Grep patterns</div>
+                </a>
+                <a class="mod-link" href="modules/21-nodejs-audit.html" data-module-id="21-node">
+                    <div class="mod-title">Node.js / Express Security</div>
+                    <div class="mod-sub">Middleware bypass, Prototype pollution, require() injection</div>
+                </a>
+                <a class="mod-link" href="modules/22-python-audit.html" data-module-id="22-python">
+                    <div class="mod-title">Python (Flask/Django/FastAPI)</div>
+                    <div class="mod-sub">Template injection, ORM bypass, Pickle, yaml.load</div>
+                </a>
+                <a class="mod-link" href="modules/23-go-audit.html" data-module-id="23-go">
+                    <div class="mod-title">Go Security Patterns</div>
+                    <div class="mod-sub">net/http routing, path.Clean bypass, race condition</div>
+                </a>
+                <a class="mod-link" href="modules/24-auth-middleware.html" data-module-id="24-authmw">
+                    <div class="mod-title">Auth Middleware Patterns</div>
+                    <div class="mod-sub">Whitelist bypass, Route precedence, Missing middleware検出</div>
+                </a>
+                <a class="mod-link" href="modules/25-incomplete-fix.html" data-module-id="25-incfix">
+                    <div class="mod-title">Incomplete Fix Variant Strategy</div>
+                    <div class="mod-sub">Advisory読み方, Patchの穴を見つける, Sibling detection</div>
+                </a>
+                <a class="mod-link" href="modules/26-deserialization.html" data-module-id="26-deser">
+                    <div class="mod-title">Deserialization Attacks</div>
+                    <div class="mod-sub">Java/PHP/Python/Ruby gadget chains, Node.js prototype</div>
+                </a>
+                <a class="mod-link" href="modules/27-dependency-confusion.html" data-module-id="27-dep">
+                    <div class="mod-title">Supply Chain & Dependency Attacks</div>
+                    <div class="mod-sub">Dependency confusion, Typosquatting, Registry scope</div>
+                </a>
+                <a class="mod-link" href="modules/28-practice-whitebox.html" data-module-id="28-prac">
+                    <div class="mod-title">Practice: bb-whitebox-01 演習</div>
+                    <div class="mod-sub">TaskFlow API のコードレビュー実践 (practice/ 内)</div>
+                </a>
+                <a class="mod-link" href="modules/29-huntr-workflow.html" data-module-id="29-huntr">
+                    <div class="mod-title">huntr Submission Workflow</div>
+                    <div class="mod-sub">Target選定, PoC, Report作成, 提出, Triage対応</div>
+                </a>
+            </div>
+        </div>
+
+        <!-- Phase 3 -->
+        <div class="phase-card">
+            <div class="phase-card-header">
+                <div class="phase-badge lv3">3</div>
+                <div>
+                    <div class="title">Recon & Blackbox Testing</div>
+                    <div class="desc">HackerOne / Intigriti / IssueHunt でのWebアプリ外部テスト</div>
+                </div>
+            </div>
+            <div class="phase-modules">
+                <a class="mod-link" href="modules/30-recon-subdomain.html" data-module-id="30-sub">
+                    <div class="mod-title">Subdomain Enumeration</div>
+                    <div class="mod-sub">subfinder, amass, CT logs, DNS brute, 自動化パイプライン</div>
+                </a>
+                <a class="mod-link" href="modules/31-content-discovery.html" data-module-id="31-content">
+                    <div class="mod-title">Content & Endpoint Discovery</div>
+                    <div class="mod-sub">ffuf, feroxbuster, JS解析, Wayback, GitHub dorking</div>
+                </a>
+                <a class="mod-link" href="modules/32-js-analysis.html" data-module-id="32-js">
+                    <div class="mod-title">JavaScript Analysis</div>
+                    <div class="mod-sub">API endpoint抽出, Secret detection, Source map, Webpack chunk</div>
+                </a>
+                <a class="mod-link" href="modules/33-api-testing.html" data-module-id="33-api">
+                    <div class="mod-title">API Security Testing</div>
+                    <div class="mod-sub">REST/GraphQL, Parameter tampering, Mass assignment, Rate limit</div>
+                </a>
+                <a class="mod-link" href="modules/34-mobile-api.html" data-module-id="34-mobile">
+                    <div class="mod-title">Mobile API Testing</div>
+                    <div class="mod-sub">Certificate pinning bypass, API reverse engineering, Frida basics</div>
+                </a>
+                <a class="mod-link" href="modules/35-cloud-misconfig.html" data-module-id="35-cloud">
+                    <div class="mod-title">Cloud Misconfiguration</div>
+                    <div class="mod-sub">AWS metadata, S3 bucket, Firebase rules, Subdomain takeover</div>
+                </a>
+                <a class="mod-link" href="modules/36-automation.html" data-module-id="36-auto">
+                    <div class="mod-title">Automation & Custom Tools</div>
+                    <div class="mod-sub">Nuclei templates, カスタムscanner, CI/CD integration</div>
+                </a>
+                <a class="mod-link" href="modules/37-scope-management.html" data-module-id="37-scope">
+                    <div class="mod-title">Scope Management & Prioritization</div>
+                    <div class="mod-sub">Attack surface mapping, 優先度付け, Time-boxing</div>
+                </a>
+            </div>
+        </div>
+
+        <!-- Phase 4 -->
+        <div class="phase-card">
+            <div class="phase-card-header">
+                <div class="phase-badge lv4">4</div>
+                <div>
+                    <div class="title">Advanced Exploitation &mdash; 連鎖と高度技法</div>
+                    <div class="desc">複数の問題を連鎖させてインパクト最大化。実レポートから学ぶ</div>
+                </div>
+            </div>
+            <div class="phase-modules">
+                <a class="mod-link" href="modules/40-exploit-chains.html" data-module-id="40-chain">
+                    <div class="mod-title">Exploit Chain Construction</div>
+                    <div class="mod-sub">SSRF→RCE, XSS→ATO, IDOR→Exfil, 連鎖設計の思考法</div>
+                </a>
+                <a class="mod-link" href="modules/41-race-conditions.html" data-module-id="41-race">
+                    <div class="mod-title">Race Conditions & TOCTOU</div>
+                    <div class="mod-sub">Single-packet attack, Limit bypass, State machine abuse</div>
+                </a>
+                <a class="mod-link" href="modules/42-oauth-attacks.html" data-module-id="42-oauth">
+                    <div class="mod-title">OAuth / SSO Advanced Attacks</div>
+                    <div class="mod-sub">Token theft, Account linking, PKCE bypass, IdP confusion</div>
+                </a>
+                <a class="mod-link" href="modules/43-websocket.html" data-module-id="43-ws">
+                    <div class="mod-title">WebSocket & Real-time Attacks</div>
+                    <div class="mod-sub">CSWSH, Message tampering, Auth bypass on upgrade</div>
+                </a>
+                <a class="mod-link" href="modules/44-graphql.html" data-module-id="44-gql">
+                    <div class="mod-title">GraphQL Security</div>
+                    <div class="mod-sub">Introspection, Batching, Nested query DoS, Auth bypass</div>
+                </a>
+                <a class="mod-link" href="modules/45-cache-poisoning.html" data-module-id="45-cache">
+                    <div class="mod-title">Web Cache Poisoning & Deception</div>
+                    <div class="mod-sub">Unkeyed headers, Cache key normalization, CDN specific</div>
+                </a>
+                <a class="mod-link" href="modules/46-http-smuggling.html" data-module-id="46-smuggle">
+                    <div class="mod-title">HTTP Request Smuggling</div>
+                    <div class="mod-sub">CL.TE, TE.CL, H2.CL, Browser-powered desync</div>
+                </a>
+                <a class="mod-link" href="modules/47-prototype-pollution.html" data-module-id="47-proto">
+                    <div class="mod-title">Prototype Pollution (Advanced)</div>
+                    <div class="mod-sub">Server-side gadgets, Client-side chains, DOM clobbering</div>
+                </a>
+                <a class="mod-link" href="modules/48-mcp-llm-attacks.html" data-module-id="48-llm">
+                    <div class="mod-title">LLM / MCP / AI Security</div>
+                    <div class="mod-sub">Prompt injection, Tool poisoning, Agent exploitation</div>
+                </a>
+            </div>
+        </div>
+
+        <!-- Phase 5 -->
+        <div class="phase-card">
+            <div class="phase-card-header">
+                <div class="phase-badge lv5">5</div>
+                <div>
+                    <div class="title">Operations &mdash; 持続可能なハンティング</div>
+                    <div class="desc">Dup回避, Signal管理, レポート品質, 税務, 実体験からの教訓</div>
+                </div>
+            </div>
+            <div class="phase-modules">
+                <a class="mod-link" href="modules/50-report-writing.html" data-module-id="50-report">
+                    <div class="mod-title">Report Writing Mastery</div>
+                    <div class="mod-sub">Impact記述, PoC構造, 再現手順, Platform別フォーマット</div>
+                </a>
+                <a class="mod-link" href="modules/51-severity-cvss.html" data-module-id="51-cvss">
+                    <div class="mod-title">Severity Assessment & CVSS</div>
+                    <div class="mod-sub">CVSS 3.1/4.0計算, Precedent citation, 適切なseverity主張</div>
+                </a>
+                <a class="mod-link" href="modules/52-dup-avoidance.html" data-module-id="52-dup">
+                    <div class="mod-title">Duplicate Avoidance Strategy</div>
+                    <div class="mod-sub">Advisory/PR/Issue 3軸, タイミング, Dup zone管理</div>
+                </a>
+                <a class="mod-link" href="modules/53-platform-ops.html" data-module-id="53-platform">
+                    <div class="mod-title">Platform Operations</div>
+                    <div class="mod-sub">HackerOne, Intigriti, IssueHunt, huntr の特性と戦略</div>
+                </a>
+                <a class="mod-link" href="modules/54-ai-slop.html" data-module-id="54-aislop">
+                    <div class="mod-title">AI Slop Avoidance</div>
+                    <div class="mod-sub">AI利用時の品質担保, False-positive回避, End-to-end verify</div>
+                </a>
+                <a class="mod-link" href="modules/55-signal-reputation.html" data-module-id="55-signal">
+                    <div class="mod-title">Signal & Reputation Management</div>
+                    <div class="mod-sub">H1 Signal計算, Reputation building, Program selection</div>
+                </a>
+                <a class="mod-link" href="modules/56-tax-legal.html" data-module-id="56-tax">
+                    <div class="mod-title">Tax & Legal</div>
+                    <div class="mod-sub">副業税務, W-8BEN, 20万円ルール, 住民税, 会社規定</div>
+                </a>
+                <a class="mod-link" href="modules/57-lessons-learned.html" data-module-id="57-lessons">
+                    <div class="mod-title">Lessons Learned &mdash; 実体験集</div>
+                    <div class="mod-sub">mei-bb調査記録からの教訓、失敗と成功のパターン</div>
+                </a>
+                <a class="mod-link" href="modules/58-workflow-tooling.html" data-module-id="58-workflow">
+                    <div class="mod-title">Workflow & Tooling (mei-bb)</div>
+                    <div class="mod-sub">Phase 0→1→2 フロー, bb-toolkit, 自動化スクリプト群</div>
+                </a>
+                <a class="mod-link" href="modules/59-mindset.html" data-module-id="59-mindset">
+                    <div class="mod-title">Hunter's Mindset</div>
+                    <div class="mod-sub">モチベーション維持, Session budget, Pivot判断, 学習戦略</div>
+                </a>
+            </div>
+        </div>
+
+        <!-- Sources -->
+        <div class="sources-section">
+            <h2>Information Sources</h2>
+            <div class="source-grid">
+                <div class="source-item">
+                    <h4>PortSwigger Web Security Academy</h4>
+                    <p>Lab演習付き体系的学習。各モジュールの「WSA Lab」で直接リンク。無料。</p>
+                </div>
+                <div class="source-item">
+                    <h4>mei-bb Repository</h4>
+                    <p>実際のBB調査記録 (findings/), PoC, 提出レポート, ワークフロー, ツール群。</p>
+                </div>
+                <div class="source-item">
+                    <h4>practice/bb-whitebox-01</h4>
+                    <p>ローカル脆弱Webアプリ。Phase 2 コードレビュー演習用。</p>
+                </div>
+                <div class="source-item">
+                    <h4>HackerOne Hacktivity</h4>
+                    <p>公開された実レポート集。Report Writing と脆弱性クラスの実例。</p>
+                </div>
+                <div class="source-item">
+                    <h4>GitHub Security Advisories (GHSA)</h4>
+                    <p>OSS脆弱性DB。Dup check と incomplete-fix variant 発見のソース。</p>
+                </div>
+                <div class="source-item">
+                    <h4>OWASP Testing Guide v4.2</h4>
+                    <p>テスト手法の網羅的リファレンス。Methodology裏付け。</p>
+                </div>
+                <div class="source-item">
+                    <h4>Claude Code Memory (Lessons)</h4>
+                    <p>実体験から蓄積されたfeedback/project記録。Phase 5 教訓のソース。</p>
+                </div>
+                <div class="source-item">
+                    <h4>news/09_bug-bounty</h4>
+                    <p>日次BBダイジェスト。最新トレンド、新規プログラム、注目レポート。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="assets/progress.js"></script>
+</body>
+</html>

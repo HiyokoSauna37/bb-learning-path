@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Insecure Direct Object Reference (IDOR) - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; IDOR
+        </div>
+        <div class="page-header">
+            <h1>Insecure Direct Object Reference (IDOR)</h1>
+            <p class="subtitle">5 questions - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../modules/13-idor.html">&larr; Module に戻る</a>
+            <a href="../quiz.html">Quiz 一覧 &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-13-idor', [
+        {
+            question: "IDORの脆弱性をテストするために最低限必要なアカウント数はいくつか？",
+            options: [
+                "1つ（自分のアカウントのIDを変えてテストすればよい）",
+                "2つ（アカウントAのセッションでアカウントBのリソースにアクセスを試みる）",
+                "3つ（管理者、一般ユーザー、未認証の3パターンが必要）",
+                "アカウント数は関係なく、IDの推測可能性のみが重要"
+            ],
+            answer: 1,
+            explanation: "IDORテストには最低2アカウント必要。アカウントAでリソースIDを確認し、アカウントBのセッションでそのIDへアクセスを試みる。1アカウントだけでIDを変えてもテストとして不完全：404（存在しない）と403（権限なし）の区別が付かない場合がある。2アカウントあれば「確実に存在するが自分のものではないID」を使ってテストできる。"
+        },
+        {
+            question: "オブジェクトIDにUUID(v4)を使用することがIDOR対策として不十分な理由は何か？",
+            options: [
+                "UUIDは衝突する可能性があり、他ユーザーのIDと同じになることがある",
+                "UUIDは他のAPIレスポンス、共有リンク、メール通知等から漏洩する可能性がある",
+                "UUIDはBase64デコードすればユーザーIDが含まれている",
+                "UUIDv4は実はタイムスタンプベースであり推測可能"
+            ],
+            answer: 1,
+            explanation: "UUIDv4は推測不可能だが、それ自体はアクセス制御ではない。UUIDはAPI一覧レスポンス、他ユーザーとの共有URL、メール通知、ログ、ブラウザ履歴、Refererヘッダー等から容易に漏洩する。「知っているか」ではなく「権限があるか」でアクセス制御すべき。BBでは「IDが推測困難」は却下理由にならない。"
+        },
+        {
+            question: "Read IDOR（情報漏洩）とWrite IDOR（データ改ざん）では、一般的にどちらが重大度が高いか？",
+            options: [
+                "Read IDOR（機密情報の漏洩は不可逆であるため）",
+                "Write IDOR（他ユーザーのデータの改ざん・削除はより直接的な被害をもたらすため）",
+                "同等（どちらもアクセス制御の欠如という同じ根本原因のため）",
+                "コンテキストによるため一般論では言えない"
+            ],
+            answer: 1,
+            explanation: "一般的にWrite IDORの方が重大度が高い。他ユーザーのパスワード変更（ATO）、データ削除（可用性への影響）、設定変更等はConfidentialityだけでなくIntegrityとAvailabilityにも影響する。ただし、Read IDORでも対象が決済情報や医療記録等の高機密データであればCriticalになりうる。CVSSではI:HがC:Hより高スコアになる傾向。"
+        },
+        {
+            question: "Burp SuiteのAuthorize拡張が行うことの正確な説明はどれか？",
+            options: [
+                "リクエスト内のIDパラメータを自動的にインクリメントして別ユーザーのデータへのアクセスを試みる",
+                "キャプチャしたリクエストを別のユーザーのセッションCookie/トークンで自動的に再送信し、レスポンスの差異を比較する",
+                "アプリケーションのすべてのエンドポイントを自動発見してIDORの可能性があるパラメータをリストアップする",
+                "各リクエストの認可ヘッダーを削除して未認証アクセスの可否をテストする"
+            ],
+            answer: 1,
+            explanation: "Authorizeは2つのセッション（通常ユーザーA＋低権限ユーザーB）を設定し、ユーザーAとしてブラウジングする全リクエストを自動的にユーザーBのセッションで再送信する。レスポンスのステータスコードと長さを比較し、同一なら認可バイパスの可能性を示す。IDの改変ではなく、セッションの切り替えによるアクセス制御テスト。"
+        },
+        {
+            question: "IDORの脆弱性を探す際、URLパス以外で特に確認すべき場所はどこか？",
+            options: [
+                "HTTPヘッダー（Content-Type、Accept等）",
+                "リクエストボディ（JSON/XMLのフィールド）やGraphQLの変数（variables）",
+                "Cookie値の中のセッションID",
+                "TLSクライアント証明書のCN(Common Name)"
+            ],
+            answer: 1,
+            explanation: "IDORはURLパス(/api/users/123)だけでなく、POSTボディのJSONフィールド({\"user_id\": 123})、GraphQLのvariables({\"userId\": \"abc\"})、マルチパートフォームのhiddenフィールド等にも存在する。特にGraphQLは型安全な印象があるが、variablesに直接IDを指定する設計が多くIDORの温床。リクエスト内のあらゆるID参照が対象。"
+        }
+    ]);
+    </script>
+</body>
+</html>

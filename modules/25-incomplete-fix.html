@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Incomplete Fix Variant Strategy - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .timeline { position: relative; padding-left: 2rem; border-left: 2px solid var(--border); margin: 1.5rem 0; }
+        .timeline-item { margin-bottom: 1.5rem; position: relative; }
+        .timeline-item::before { content:''; position:absolute; left:-2.35rem; top:0.4rem; width:10px; height:10px; border-radius:50%; background:var(--accent); }
+        .timeline-item .time { font-size:0.8rem; color:var(--text-muted); }
+        .timeline-item .event { margin-top:0.2rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 2: Source Code Audit &gt; Incomplete Fix Variant Strategy
+        </div>
+
+        <div class="page-header">
+            <h1>Incomplete Fix Variant Strategy</h1>
+            <p class="subtitle">
+                既存の Advisory / CVE のパッチが不完全なケースを見つける戦略。
+                huntr での最も確度の高い discovery method の1つ。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>なぜ Incomplete Fix が狙い目なのか</h2>
+            <ul>
+                <li><strong>Existence proof</strong>: 元の CVE/Advisory が「この場所に脆弱性がある」と証明済み</li>
+                <li><strong>Patch scope が有限</strong>: 開発者はレポートされた箇所だけ直す傾向がある (sibling が残る)</li>
+                <li><strong>Diff が読めれば勝ち</strong>: git log → commit → 変更ファイルの「直していない兄弟」を grep</li>
+                <li><strong>Dup risk が比較的低い</strong>: 同じ advisory を見ている人は少ない（タイミング依存）</li>
+            </ul>
+
+            <div class="callout warning">
+                <div class="callout-title">タイミングの話 (実践で報奨金を狙う段階向け)</div>
+                <p>
+                    実際に報奨金を得る段階では、<strong>advisory 公開から 3日以内</strong>が golden window。
+                    <strong>30日超は原則 NOGO</strong> (他の hunter が既に見つけている可能性が高い)。
+                    例外は非常にマイナーなプロジェクトのみ。
+                </p>
+                <p>
+                    <strong>ただし、学習目的なら古い advisory で全く問題ない。</strong>
+                    6ヶ月前の advisory でも「patch diff を読む → sibling を grep する」技術は同じ。
+                    まずは古い advisory で練習し、スピードが付いてから新鮮な advisory をウォッチする流れがおすすめ。
+                    (参照: feedback_bb_incomplete_fix_variant_strategy)
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>手法: Step by Step</h2>
+
+            <div class="mermaid">
+flowchart TD
+    A[Step 1: Advisory発見<br/>GHSA / huntr / NVD] --> B[Step 2: Patch Diffを読む<br/>git show commit]
+    B --> C[Step 3: 修正内容を理解<br/>何のcheckが追加されたか]
+    C --> D{同じパターンで<br/>未修正の箇所は?}
+    D -->|あり| E[Sibling発見!<br/>grep/middleware-audit]
+    D -->|なし| F[別のAdvisoryへ]
+    E --> G[Step 4: PoC検証<br/>Docker実環境で確認]
+    G --> H{再現成功?}
+    H -->|Yes| I[Step 5: レポート作成<br/>元CVE + パッチ不備 + PoC]
+    H -->|No| J[別レイヤーで防御済み<br/>撤退]
+            </div>
+
+            <h3>Step 1: Advisory の発見</h3>
+            <ul>
+                <li><strong>GitHub Security Advisories (GHSA)</strong>: <code>bb-ghsa list &lt;repo&gt;</code> で全件取得</li>
+                <li><strong>huntr.com</strong> の公開 disclosure feed</li>
+                <li><strong>NVD / CVE</strong>: 新規公開の CVE をウォッチ</li>
+                <li><strong>news/09_bug-bounty</strong>: 日次ダイジェストで新規 advisory をキャッチ</li>
+            </ul>
+
+            <h3>Step 2: Patch Diff を読む</h3>
+<pre><code># Advisory に紐づく commit/PR を特定
+git log --all --oneline --grep="CVE-2026-XXXXX"
+git log --all --oneline --grep="GHSA-xxxx-xxxx-xxxx"
+
+# Patch diff を確認
+git show &lt;commit-hash&gt;
+
+# 変更されたファイルを確認
+git diff &lt;parent&gt;..&lt;commit&gt; --stat</code></pre>
+
+            <h3>Step 3: Sibling Detection (修正漏れ箇所の発見)</h3>
+            <p>パッチが行ったことを理解し、<strong>同じパターンで修正されていない箇所</strong>を探す。</p>
+
+<pre><code># パッチが追加した check の関数名を特定
+# 例: パッチが validWorkspaceSlug middleware を追加した場合
+
+# 同じ router で middleware が付いていない route を検索
+grep -rn "router\.\(get\|post\|put\|delete\)" routes/ | grep -v "validWorkspaceSlug"
+
+# bb-middleware-audit (Go middleware 用) で機械的に検出
+bb-middleware-audit scan --pattern="authMiddleware" --missing</code></pre>
+
+            <h4>よくある Sibling パターン</h4>
+            <table>
+                <thead><tr><th>パターン</th><th>探し方</th><th>実例</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td>Middleware 追加漏れ</td>
+                        <td>同じ router の他 route に同 middleware があるか grep</td>
+                        <td>AnythingLLM: parsed-files に middleware 追加、 suggested-messages / pfp に漏れ</td>
+                    </tr>
+                    <tr>
+                        <td>HTTP Method 別の漏れ</td>
+                        <td>GET は修正されたが POST/PUT/DELETE は未修正</td>
+                        <td>LibreChat: DELETE に user filter 追加、 GET に漏れ</td>
+                    </tr>
+                    <tr>
+                        <td>Endpoint 別の漏れ</td>
+                        <td>同じ controller/service の他 endpoint</td>
+                        <td>lobe-chat: chat route に auth追加、 tts/stt に漏れ</td>
+                    </tr>
+                    <tr>
+                        <td>Check 条件の不完全さ</td>
+                        <td>パッチの if 文が一部条件を漏らしている</td>
+                        <td>wger: gym_id 比較が int型 vs None で bypass</td>
+                    </tr>
+                    <tr>
+                        <td>別 caller からの呼び出し</td>
+                        <td>修正された関数を呼ぶ上位関数が他にもある</td>
+                        <td>LiteLLM: global_spend routes は修正、 spend routes 未修正</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Step 4: PoC 検証</h3>
+            <ul>
+                <li>必ず <strong>実 runtime</strong> で確認 (Docker image, latest release)</li>
+                <li>Positive test (脆弱性が刺さる) + Negative test (通常の認可が効く) の両方</li>
+                <li>パッチ適用後のバージョンで再現すること (=パッチが不完全な証拠)</li>
+            </ul>
+
+            <h3>Step 5: レポート作���</h3>
+            <p>Incomplete fix variant の report は以下を必ず含める:</p>
+            <ol>
+                <li>元の CVE/Advisory のリンク</li>
+                <li>パッチが修正した箇所の説明</li>
+                <li>パッチが修正し損ねた箇所の指摘</li>
+                <li>新たに発見した sink の PoC</li>
+                <li>提案する修正方法</li>
+            </ol>
+        </div>
+
+        <div class="section">
+            <h2>Case Study: 実際の Incomplete Fix Variant</h2>
+
+            <h3>Case 1: AnythingLLM (huntr 提出済み)</h3>
+            <div class="timeline">
+                <div class="timeline-item">
+                    <div class="time">2026-03: GHSA-p5rf-8p88-979c</div>
+                    <div class="event"><code>parsed-files</code> endpoint に IDOR。<code>validWorkspaceSlug</code> middleware が追加された。</div>
+                </div>
+                <div class="timeline-item">
+                    <div class="time">2026-04-30: 発見</div>
+                    <div class="event">同じ router の <code>suggested-messages</code> GET と <code>pfp</code> GET には middleware が <strong>未追加</strong>。</div>
+                </div>
+                <div class="timeline-item">
+                    <div class="time">検証</div>
+                    <div class="event">Docker <code>mintplexlabs/anythingllm:latest</code> v1.12.1 + master HEAD で E2E PoC 確認。</div>
+                </div>
+            </div>
+            <p><strong>発見手法</strong>: git diff で追加された middleware → 同 router の他 route を grep → 2 endpoint に middleware 不在を確認</p>
+
+            <h3>Case 2: wger (GHSA 提出済み)</h3>
+            <div class="timeline">
+                <div class="timeline-item">
+                    <div class="time">2026-04-26: CVE-2026-43948 / GHSA-mhc8-p3jx-84mm</div>
+                    <div class="event">パッチ commit <code>e1d329ff</code> で <code>is_same_gym()</code> helper 導入。</div>
+                </div>
+                <div class="timeline-item">
+                    <div class="time">2026-05-08: 発見</div>
+                    <div class="event"><code>user.py</code> の 3 箇所 (<code>delete</code>, <code>UserDeactivateView</code>, <code>UserActivateView</code>) が旧来の raw-int 比較のまま。</div>
+                </div>
+                <div class="timeline-item">
+                    <div class="time">検証</div>
+                    <div class="event">Docker <code>wger/server:latest</code> で positive ×3 + negative ×3 + revert test。Critical 9.9。</div>
+                </div>
+            </div>
+            <p><strong>発見手法</strong>: パッチが導入した <code>is_same_gym()</code> を grep → 呼ばれていない箇所が 3 つ残存</p>
+
+            <h3>Case 3: lobe-chat (GHSA 提出済み)</h3>
+            <div class="timeline">
+                <div class="timeline-item">
+                    <div class="time">2026-04: GHSA-5mwj-v5jw-5c97 / PR #13535</div>
+                    <div class="event"><code>checkAuth</code> middleware が chat/models route に追加。</div>
+                </div>
+                <div class="timeline-item">
+                    <div class="time">2026-05-03: 発見</div>
+                    <div class="event"><code>/webapi/tts/openai</code> と <code>/webapi/stt/openai</code> に <code>checkAuth</code> 未適用。<code>OPENAI_API_KEY</code> fallback でコスト発生。</div>
+                </div>
+            </div>
+            <p><strong>発見手法</strong>: PR diff → 追加された middleware 名 → 適用されていない route を検索</p>
+        </div>
+
+        <div class="section">
+            <h2>Anti-patterns (やってはいけないこと)</h2>
+
+            <div class="callout danger">
+                <div class="callout-title">Common Mistakes</div>
+                <ul>
+                    <li><strong>30日超の advisory に飛びつく</strong> → Dup 確率が跳ね上がる (default NOGO)</li>
+                    <li><strong>コードだけ見て report する</strong> → 必ず runtime で PoC 確認 (serializer の output ≠ HTTP response)</li>
+                    <li><strong>「Missing feature」を variant と混同する</strong> → helper function が存在しない = feature request であって bug ではない</li>
+                    <li><strong>Advisory の wording を過大解釈する</strong> → ≥2通りの解釈がある場合、全解釈で violation でないなら submit 不可</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>ツール</h2>
+            <table>
+                <thead><tr><th>ツール</th><th>用途</th></tr></thead>
+                <tbody>
+                    <tr><td><code>bb-ghsa list &lt;repo&gt;</code></td><td>リポジトリの全 advisory を一覧取得</td></tr>
+                    <tr><td><code>bb-middleware-audit</code></td><td>Go/Express middleware の追加漏れを機械検出</td></tr>
+                    <tr><td><code>bb-advisory-age &lt;advisory&gt;</code></td><td>Advisory 公開からの経過日数 → GO/NOGO 判定</td></tr>
+                    <tr><td><code>bb-whitelist-audit</code></td><td>WHITELIST_URLS auth-bypass anti-pattern の sibling 検出</td></tr>
+                    <tr><td><code>git log --oneline --all</code></td><td>Patch commit とその周辺変更の追跡</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Patch diff を読む力</strong>が直接お金に変わる — 1つの advisory から複数の variant が見つかる</li>
+                    <li><strong>Sibling detection</strong>: パッチが「何をしたか」を理解し、「同じことをすべきだが していない箇所」を探す</li>
+                    <li><strong>Timing</strong>: Advisory 公開から 3日以内が golden window。30日超は原則 NOGO</li>
+                    <li><strong>Runtime verify 必須</strong>: コードレベルで脆弱に見えても、別のレイヤーで止まっていることがある</li>
+                    <li><strong>Negative test</strong>: パッチが効いている箇所で 403 が返ることを確認 → 修正漏れ箇所との対比を report に含める</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="29-huntr-workflow.html">huntr Submission Workflow</a> — 提出フローの��細</li>
+                <li><a href="52-dup-avoidance.html">Phase 5: Duplicate Avoidance</a> — Dup zone 管理</li>
+                <li><a href="24-auth-middleware.html">Auth Middleware Patterns</a> — Middleware bypass の deeper dive</li>
+            </ul>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="25-incfix" onclick="toggleComplete('25-incfix')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="24-auth-middleware.html">&larr; 前: Auth Middleware</a>
+            <a href="26-deserialization.html">次: Deserialization &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

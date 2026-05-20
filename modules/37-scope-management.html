@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scope Management & Prioritization - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn {
+            display: inline-block;
+            padding: 0.5rem 1.2rem;
+            border: 1px solid var(--green);
+            border-radius: 6px;
+            background: transparent;
+            color: var(--green);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .complete-btn:hover { background: var(--green); color: #000; }
+        .complete-btn.is-complete { background: var(--green); color: #000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 3: Recon &amp; Blackbox &gt; Scope Management &amp; Prioritization
+        </div>
+
+        <div class="page-header">
+            <h1>Scope Management &amp; Prioritization</h1>
+            <p class="subtitle">
+                限られた時間でどこを攻めるか。スコープの読み方、優先順位の付け方、
+                そして「いつ撤退するか」の判断基準。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+            </div>
+        </div>
+
+        <!-- Section: Reading Scope -->
+        <div class="section">
+            <h2>Program Scope の読み方</h2>
+
+            <h3>In-Scope Assets</h3>
+            <p>program page に明記された攻撃対象。ここだけをテストする。</p>
+            <ul>
+                <li><strong>*.target.com</strong> — Wildcard: 全 subdomain が対象</li>
+                <li><strong>app.target.com</strong> — 単一ドメイン: そこだけ</li>
+                <li><strong>Android/iOS App</strong> — モバイルアプリ + その API</li>
+                <li><strong>API (api.target.com)</strong> — API endpoint のみ</li>
+                <li><strong>GitHub repos</strong> — ソースコード + self-hosted instance</li>
+            </ul>
+
+            <h3>Out-of-Scope (OOS)</h3>
+            <p>絶対に触れてはいけないもの。違反すると ban される。</p>
+            <ul>
+                <li><strong>DoS/DDoS</strong> — サービスの可用性を損なうテスト</li>
+                <li><strong>Social Engineering</strong> — 従業員へのフィッシング</li>
+                <li><strong>Physical Attacks</strong> — 物理アクセスが前提の攻撃</li>
+                <li><strong>Third-party services</strong> — target が利用している外部サービス</li>
+                <li><strong>MITM-required attacks</strong> — 中間者攻撃が前提の脆弱性</li>
+                <li><strong>Self-XSS</strong> — 被害者の操作なしに再現できない XSS</li>
+            </ul>
+
+            <div class="callout warning">
+                <div class="callout-title">OOS Rule と Attack Chain の突き合わせ</div>
+                <p>
+                    Submit 直前に、自分の attack chain の primary step が OOS rule に
+                    抵触しないか必ず確認すること。
+                    例: 「MITM-required attacks are out of scope」であれば、
+                    MITM が前提のシナリオは severity に関わらず reject される。
+                </p>
+            </div>
+        </div>
+
+        <!-- Section: Attack Surface Mapping -->
+        <div class="section">
+            <h2>Attack Surface Mapping</h2>
+            <p>全 endpoint を列挙した後、どこが最も脆弱そうかを優先順位付けする。</p>
+
+            <h3>High-Priority Targets</h3>
+            <ul>
+                <li><strong>認証・認可系 endpoint</strong> — /login, /register, /password-reset, /api/admin/*</li>
+                <li><strong>ファイルアップロード</strong> — 任意のコンテンツを注入できる可能性</li>
+                <li><strong>Payment / Financial</strong> — 金銭的影響 = 高 severity</li>
+                <li><strong>User data endpoints</strong> — /users/{id}, /profile, /settings</li>
+                <li><strong>Search / Filter</strong> — SQL injection, XSS の入口</li>
+                <li><strong>Export / Download</strong> — SSRF, Path Traversal の可能性</li>
+                <li><strong>新機能 / Beta 機能</strong> — テストが不十分な傾向</li>
+            </ul>
+
+            <h3>Low-Priority (but not zero)</h3>
+            <ul>
+                <li>Static content pages</li>
+                <li>Marketing / Blog (別ドメインの場合は特に)</li>
+                <li>Well-known frameworks のデフォルト endpoint</li>
+            </ul>
+        </div>
+
+        <!-- Section: Time-Boxing -->
+        <div class="section">
+            <h2>Time-Boxing: いつ撤退するか</h2>
+            <p>
+                1つのターゲットに無限に時間をかけてはいけない。
+                成果が出ないまま深追いすると、他の有望なターゲットを逃す。
+            </p>
+
+            <h3>Time-Boxing ルール</h3>
+            <table style="width:100%; border-collapse:collapse; margin:1rem 0;">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <th style="text-align:left; padding:0.5rem;">フェーズ</th>
+                        <th style="text-align:left; padding:0.5rem;">最大時間</th>
+                        <th style="text-align:left; padding:0.5rem;">判断基準</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;">Initial recon</td>
+                        <td style="padding:0.5rem;">30 min</td>
+                        <td style="padding:0.5rem;">Attack surface の広さを評価</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;">Deep dive (1 target)</td>
+                        <td style="padding:0.5rem;">2-4 hours</td>
+                        <td style="padding:0.5rem;">具体的な仮説が立たなければ pivot</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;">PoC development</td>
+                        <td style="padding:0.5rem;">1-2 hours</td>
+                        <td style="padding:0.5rem;">再現できなければ保留して次へ</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.5rem;">Anti-bot wall detection</td>
+                        <td style="padding:0.5rem;">5 min</td>
+                        <td style="padding:0.5rem;">403 + 大 body = 即 pivot</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="callout">
+                <div class="callout-title">Session Budget: Max 2 Pivots</div>
+                <p>
+                    1 セッションで program を切り替えるのは最大 2 回まで。
+                    3 回目の pivot が必要な場合はセッションを終了し、
+                    アカウント作成などの human step を挟んでから再開する。
+                    散漫になることを防ぎ、各ターゲットに集中力を維持する。
+                </p>
+            </div>
+        </div>
+
+        <!-- Section: Priority Matrix -->
+        <div class="section">
+            <h2>Priority Matrix</h2>
+            <p>ターゲット選択時の3軸評価:</p>
+
+            <table style="width:100%; border-collapse:collapse; margin:1rem 0;">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <th style="text-align:left; padding:0.5rem;">軸</th>
+                        <th style="text-align:left; padding:0.5rem;">High</th>
+                        <th style="text-align:left; padding:0.5rem;">Low</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;"><strong>Impact</strong></td>
+                        <td style="padding:0.5rem;">Payment, PII, Admin access</td>
+                        <td style="padding:0.5rem;">Info disclosure (non-sensitive)</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;"><strong>Likelihood</strong></td>
+                        <td style="padding:0.5rem;">新機能、複雑なロジック、legacy code</td>
+                        <td style="padding:0.5rem;">静的ページ、well-tested framework</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.5rem;"><strong>Competition</strong></td>
+                        <td style="padding:0.5rem;">新しい program、小さいスコープ</td>
+                        <td style="padding:0.5rem;">大手 program で大量の hunter が参加</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <p>
+                <strong>理想的なターゲット:</strong> High Impact x High Likelihood x Low Competition。
+                新しく公開された program や、最近スコープが拡大された program が該当する。
+            </p>
+        </div>
+
+        <!-- Section: Program Selection -->
+        <div class="section">
+            <h2>Program Selection</h2>
+
+            <h3>Paid vs Unpaid</h3>
+            <table style="width:100%; border-collapse:collapse; margin:1rem 0;">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <th style="text-align:left; padding:0.5rem;">要素</th>
+                        <th style="text-align:left; padding:0.5rem;">Paid (Bounty)</th>
+                        <th style="text-align:left; padding:0.5rem;">Unpaid (VDP)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;">報酬</td>
+                        <td style="padding:0.5rem;">金銭的報酬あり</td>
+                        <td style="padding:0.5rem;">Reputation のみ</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;">競争</td>
+                        <td style="padding:0.5rem;">激しい (dup リスク高)</td>
+                        <td style="padding:0.5rem;">比較的少ない</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;">Response time</td>
+                        <td style="padding:0.5rem;">一般的に早い</td>
+                        <td style="padding:0.5rem;">遅いことが多い</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.5rem;">初心者向き</td>
+                        <td style="padding:0.5rem;">Signal 蓄積に有効</td>
+                        <td style="padding:0.5rem;">練習に最適</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Large vs Small Scope</h3>
+            <ul>
+                <li><strong>Large scope (*.target.com)</strong> — recon の余地が大きい、subdomain takeover を狙える、dup されにくい裏道がある</li>
+                <li><strong>Small scope (app.target.com only)</strong> — deep dive が必要、logic bug に注力、競争が激しい</li>
+            </ul>
+
+            <h3>Program Precheck</h3>
+            <p>調査開始前に確認すべきポイント:</p>
+            <ul>
+                <li><strong>Response time</strong> — 平均 triage 時間が長すぎる program は避ける</li>
+                <li><strong>Bounty table</strong> — severity ごとの報酬額を確認</li>
+                <li><strong>Past reports (disclosed)</strong> — どのレベルの bug が accept されているか</li>
+                <li><strong>Program age</strong> — 新しい program は低hanging fruit が残っている</li>
+                <li><strong>Anti-bot measures</strong> — automated recon が block されるか</li>
+                <li><strong>Automation policy</strong> — 自動スキャンの許可/禁止</li>
+            </ul>
+
+            <div class="callout warning">
+                <div class="callout-title">Anti-Bot Detection と即時 Pivot</div>
+                <p>
+                    Reddit, Shopify 等の大手は anti-bot で curl/automated recon を block する。
+                    403 + 大きな response body が返ったら wall と判断し、5分以内に pivot する。
+                    wall を突破しようとして時間を浪費しない。
+                </p>
+            </div>
+        </div>
+
+        <!-- Section: Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>OOS を最初に読む</strong> — 違反は ban、確認漏れは致命的</li>
+                    <li><strong>Time-box で散漫を防止</strong> — 成果がなければ決断して pivot</li>
+                    <li><strong>Session budget は 2 pivot max</strong> — 3回目は撤退してリセット</li>
+                    <li><strong>Impact x Likelihood x Competition</strong> — 3軸で冷静に評価</li>
+                    <li><strong>新 program は最高の機会</strong> — 公開直後は低hanging fruit が豊富</li>
+                    <li><strong>Anti-bot wall は即 pivot</strong> — 突破に時間をかけない</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Section: References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://www.hackerone.com/hackers" target="_blank">HackerOne - Hackers</a></li>
+                <li><a href="https://www.bugcrowd.com/bug-bounty-list/" target="_blank">Bugcrowd - Bug Bounty Programs</a></li>
+                <li><a href="https://www.intigriti.com/programs" target="_blank">Intigriti - Programs</a></li>
+                <li><a href="https://github.com/projectdiscovery/public-bugbounty-programs" target="_blank">Public Bug Bounty Programs List</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete button -->
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="37-scope" onclick="toggleComplete('37-scope')">Mark Complete</button>
+        </div>
+
+        <!-- Navigation -->
+        <div class="page-nav">
+            <a href="36-automation.html">&larr; 前: Automation &amp; Custom Tools</a>
+            <a href="40-exploit-chains.html">次: Exploit Chains (Phase 4) &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

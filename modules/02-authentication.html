@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authentication & Session Management - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 0: Foundation &gt; Authentication & Session Management
+        </div>
+
+        <div class="page-header">
+            <h1>Authentication & Session Management</h1>
+            <p class="subtitle">認証と Session 管理の仕組みを理解し、JWT misconfiguration や OAuth の実装ミスを見抜く力を養う。</p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-wsa">WSA Lab</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Cookie-Based Session</h2>
+            <p>
+                最も古典的な認証方式。サーバーがランダムな Session ID を生成し、<code>Set-Cookie</code> header でブラウザに返す。
+                以降のリクエストで Cookie が自動送信され、サーバー側で Session Store と照合する。
+            </p>
+
+            <h3>Session ID の要件</h3>
+            <ul>
+                <li><strong>十分なエントロピー</strong>: 最低128bit のランダム値 (CSPRNG 由来)</li>
+                <li><strong>推測不可能性</strong>: 連番、タイムスタンプベース、MD5(username) は全て脆弱</li>
+                <li><strong>適切な Cookie 属性</strong>: HttpOnly, Secure, SameSite=Lax 以上</li>
+                <li><strong>Session 有効期限</strong>: Idle timeout + Absolute timeout</li>
+            </ul>
+
+            <h3>Session Fixation</h3>
+            <p>
+                攻撃者が既知の Session ID を被害者に使わせる攻撃。ログイン後に Session ID を再生成しないと成立する。
+            </p>
+<pre><code># 攻撃フロー
+1. 攻撃者: サイトにアクセスして Session ID を取得 (sid=AAAA)
+2. 攻撃者: 被害者に https://target.com/?sid=AAAA を踏ませる
+3. 被害者: そのまま sid=AAAA でログイン
+4. 攻撃者: sid=AAAA で被害者のセッションを乗っ取る</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: Session 関連で狙うポイント</div>
+                <p>
+                    ログイン前後で Session ID が変わるか確認。パスワード変更・権限昇格後にも Session regeneration が必要。
+                    また、logout 時にサーバー側で Session を無効化しているか (Cookie を消すだけでは不十分)。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>JWT (JSON Web Token)</h2>
+            <p>
+                Stateless な認証トークン。<code>Header.Payload.Signature</code> の3パートを Base64url で結合した文字列。
+            </p>
+
+            <h3>JWT の構造</h3>
+<pre><code># Header
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+
+# Payload
+{
+  "sub": "1234567890",
+  "name": "John Doe",
+  "iat": 1516239022,
+  "exp": 1516242622,
+  "role": "user"
+}
+
+# Signature
+HMACSHA256(base64url(header) + "." + base64url(payload), secret)</code></pre>
+
+            <h3>JWT の一般的な攻撃</h3>
+
+            <h4>1. Algorithm None Attack</h4>
+            <p>
+                <code>"alg": "none"</code> を指定すると署名なしで受け入れるライブラリが存在した。
+                Payload を改ざんして Signature 部を空にするだけで認証バイパスが成立する。
+            </p>
+<pre><code># 攻撃: alg を none に変更、signature を削除
+eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIn0.</code></pre>
+
+            <h4>2. Algorithm Confusion (RS256 → HS256)</h4>
+            <p>
+                サーバーが RS256 (RSA 公開鍵で検証) を使っている場合、攻撃者が <code>alg</code> を HS256 に変更し、
+                公開鍵を HMAC の secret として使って署名すると、検証をパスする場合がある。
+            </p>
+<pre><code># 攻撃手順
+1. サーバーの RSA public key を取得 (/jwks.json, /.well-known/jwks.json)
+2. Header の alg を HS256 に変更
+3. Payload を改ざん (role: admin 等)
+4. Public key を secret として HMAC-SHA256 で署名
+5. サーバーが「HS256 なら secret で検証」→ public key を secret として使い、検証通過</code></pre>
+
+            <h4>3. Weak Secret / Brute Force</h4>
+            <p>
+                HS256 で secret が弱い場合 (<code>secret</code>, <code>password123</code> 等)、hashcat で crack 可能。
+            </p>
+<pre><code>hashcat -a 0 -m 16500 jwt.txt /usr/share/wordlists/rockyou.txt</code></pre>
+
+            <h4>4. kid (Key ID) Injection</h4>
+            <p>
+                <code>kid</code> parameter が DB クエリやファイルパスに使われる場合、SQL Injection や Path Traversal が可能。
+            </p>
+<pre><code># SQL Injection via kid
+{"alg":"HS256","kid":"key1' UNION SELECT 'attacker-secret' -- "}
+
+# Path Traversal via kid
+{"alg":"HS256","kid":"../../dev/null"}
+# /dev/null は空文字を返す → secret="" で署名すれば通る</code></pre>
+
+            <h4>5. 追加の JWT 脆弱性</h4>
+            <ul>
+                <li><strong>exp 未検証</strong>: 期限切れトークンがそのまま受け入れられる</li>
+                <li><strong>aud 未検証</strong>: 別サービス用のトークンが流用できる</li>
+                <li><strong>jku/x5u spoofing</strong>: 攻撃者のサーバーから鍵を読み込ませる</li>
+            </ul>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: JWT は宝の山</div>
+                <p>
+                    BB で最も頻出するのは weak secret (hashcat で数分で crack) と expired token acceptance。
+                    まず <code>jwt.io</code> でデコードして <code>alg</code>, <code>exp</code>, <code>aud</code> を確認。
+                    JWKS endpoint があれば Algorithm Confusion の可能性も。
+                    <strong>jwt_tool</strong> で自動チェックが効率的。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>OAuth 2.0</h2>
+            <p>
+                第三者にリソースアクセスを委任するための認可フレームワーク。「認証」ではなく「認可」だが、
+                実質的にログイン機能として広く使われている。
+            </p>
+
+            <h3>主要な Grant Type</h3>
+            <table>
+                <thead><tr><th>Grant Type</th><th>用途</th><th>セキュリティ</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Authorization Code</strong></td>
+                        <td>Server-side アプリ (最も一般的)</td>
+                        <td>最も安全。code は一度だけ使用、client_secret でトークン交換</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Authorization Code + PKCE</strong></td>
+                        <td>SPA / Mobile アプリ</td>
+                        <td>code_verifier で code 横取り攻撃を防止</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Implicit (非推奨)</strong></td>
+                        <td>旧 SPA 向け</td>
+                        <td>token が URL fragment に露出。現在は PKCE が推奨</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Client Credentials</strong></td>
+                        <td>Machine-to-Machine</td>
+                        <td>ユーザー不在。client_secret のみで認証</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Authorization Code Flow</h3>
+
+            <div class="mermaid">
+sequenceDiagram
+    participant User as ユーザー
+    participant App as クライアントアプリ
+    participant AuthSrv as Authorization Server
+    participant API as Resource Server
+
+    User->>App: ログインボタン押下
+    App->>AuthSrv: /authorize?response_type=code&client_id=X&redirect_uri=Y&state=Z
+    AuthSrv->>User: ログイン+同意画面表示
+    User->>AuthSrv: 許可
+    AuthSrv->>App: redirect_uri?code=AUTH_CODE&state=Z
+    App->>AuthSrv: POST /token (code + client_secret)
+    AuthSrv->>App: access_token + refresh_token
+    App->>API: Authorization: Bearer access_token
+    API->>App: Protected resource
+            </div>
+
+<pre><code># 1. ユーザーを Authorization Server にリダイレクト
+GET /authorize?
+    response_type=code&
+    client_id=CLIENT_ID&
+    redirect_uri=https://app.example.com/callback&
+    scope=openid profile&
+    state=RANDOM_CSRF_TOKEN
+
+# 2. ユーザーが許可 → redirect_uri に code が返る
+GET /callback?code=AUTH_CODE&state=RANDOM_CSRF_TOKEN
+
+# 3. Server-side で code を token に交換
+POST /token
+    grant_type=authorization_code&
+    code=AUTH_CODE&
+    redirect_uri=https://app.example.com/callback&
+    client_id=CLIENT_ID&
+    client_secret=CLIENT_SECRET</code></pre>
+
+            <h3>OAuth の一般的な脆弱性</h3>
+            <ul>
+                <li><strong>Open Redirect via redirect_uri</strong>: 検証が甘いと code/token が攻撃者サイトに漏洩</li>
+                <li><strong>state パラメータ未検証</strong>: CSRF で攻撃者のアカウントに被害者を紐付け</li>
+                <li><strong>Scope 昇格</strong>: 追加 scope を勝手に要求して過剰な権限を得る</li>
+                <li><strong>Token leakage via Referer</strong>: Implicit flow で fragment が Referer に乗る</li>
+            </ul>
+
+            <h3>PKCE (Proof Key for Code Exchange)</h3>
+            <p>
+                code_verifier (ランダム文字列) のハッシュを code_challenge として authorization request に含め、
+                token 交換時に code_verifier を送信。中間者が code を横取りしても token に交換できない。
+            </p>
+
+            <h3>OIDC (OpenID Connect)</h3>
+            <p>
+                OAuth 2.0 の上に「認証」レイヤーを追加した規格。<code>id_token</code> (JWT) でユーザー情報を返す。
+                <code>scope=openid</code> で OIDC が有効になる。nonce パラメータで replay attack を防止。
+            </p>
+        </div>
+
+        <div class="section">
+            <h2>API Keys & Bearer Tokens</h2>
+
+            <h3>API Key</h3>
+            <p>
+                シンプルな文字列ベースの認証。Header (<code>X-API-Key</code>) または query parameter で送信。
+                通常は rate limiting と billing の識別に使われるが、認証にも流用される。
+            </p>
+            <ul>
+                <li>漏洩リスク: URL に含まれるとサーバーログ、Referer、ブラウザ履歴に残る</li>
+                <li>権限管理: key ごとの scope 制御が雑な実装が多い</li>
+            </ul>
+
+            <h3>Bearer Token</h3>
+<pre><code>Authorization: Bearer eyJhbGciOiJSUzI1NiIs...</code></pre>
+            <p>
+                Token を持っていれば誰でも使える (bearer = 持参人)。盗まれたら即アカウント乗っ取り。
+                TLS 必須、保存場所 (localStorage vs httpOnly cookie) が議論になる。
+            </p>
+        </div>
+
+        <div class="section">
+            <h2>MFA (Multi-Factor Authentication)</h2>
+            <table>
+                <thead><tr><th>方式</th><th>Factor</th><th>BB で狙うポイント</th></tr></thead>
+                <tbody>
+                    <tr><td>TOTP (Google Authenticator)</td><td>Something you have</td><td>Rate limit 不在で brute force (6桁 = 1M通り)</td></tr>
+                    <tr><td>SMS OTP</td><td>Something you have</td><td>SIM swap, SS7 attack (BB では通常 OOS)</td></tr>
+                    <tr><td>WebAuthn/FIDO2</td><td>Something you have</td><td>Fallback 機構の脆弱性</td></tr>
+                    <tr><td>Recovery Codes</td><td>Something you have</td><td>生成時の情報漏洩、brute force</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: MFA Bypass パターン</div>
+                <p>
+                    MFA のバイパスは BB で高額報酬の対象。よくあるパターン:<br>
+                    (1) MFA ステップ後の response を改ざん (200 OK に変更)<br>
+                    (2) 直接 authenticated endpoint にアクセス (MFA ステップをスキップ)<br>
+                    (3) Rate limit 不在で TOTP brute force<br>
+                    (4) Backup code の rate limit 不在<br>
+                    (5) OAuth login で MFA をスキップ
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Real-World Reports</h2>
+            <table>
+                <thead><tr><th>Program</th><th>Report</th><th>Type</th><th>Bounty</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td>Shopify</td>
+                        <td><a href="https://hackerone.com/reports/270981" target="_blank">#270981</a> - Admin auth bypass via partners.shopify.com</td>
+                        <td>Auth bypass (partner flow)</td>
+                        <td>非公開</td>
+                    </tr>
+                    <tr>
+                        <td>GitHub</td>
+                        <td><a href="https://hackerone.com/reports/1901040" target="_blank">#1901040</a> - SSH cert authentication bypass</td>
+                        <td>Auth bypass</td>
+                        <td>$10,000</td>
+                    </tr>
+                    <tr>
+                        <td>Snapchat</td>
+                        <td><a href="https://hackerone.com/reports/921780" target="_blank">#921780</a> - Authentication bypass in SSO</td>
+                        <td>SSO bypass</td>
+                        <td>N/A</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>WSA Labs</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/authentication" target="_blank">Authentication labs</a></li>
+                <li><a href="https://portswigger.net/web-security/jwt" target="_blank">JWT labs</a></li>
+                <li><a href="https://portswigger.net/web-security/oauth" target="_blank">OAuth authentication labs</a></li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>JWT alg:none と Algorithm Confusion</strong> は古いライブラリで今でも刺さる。jwt_tool で自動チェック。</li>
+                    <li><strong>JWT weak secret</strong> は hashcat 16500 モードで高速 crack。rockyou.txt で試す価値あり。</li>
+                    <li><strong>OAuth redirect_uri</strong> の検証不備は open redirect → token theft の王道チェーン。</li>
+                    <li><strong>state パラメータ</strong> がない OAuth は CSRF でアカウントリンク攻撃が成立する。</li>
+                    <li><strong>MFA bypass</strong> は response manipulation, step skipping, rate limit abuse が三大パターン。</li>
+                    <li><strong>Session fixation</strong>: ログイン前後で Session ID が再生成されるか必ず確認。</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="02-auth" onclick="toggleComplete('02-auth')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="01-browser-security.html">&larr; 前: Browser Security Model</a>
+            <a href="03-encoding.html">次: Encoding & Serialization &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

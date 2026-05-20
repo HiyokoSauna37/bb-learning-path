@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browser Security Model - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 0: Foundation &gt; Browser Security Model
+        </div>
+
+        <div class="page-header">
+            <h1>Browser Security Model</h1>
+            <p class="subtitle">ブラウザがどうやって「別サイトのデータを守っている」かを理解する。これが崩れると XSS, CSRF, CORS misconfig が刺さる。</p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-wsa">WSA Lab</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Same-Origin Policy (SOP)</h2>
+            <p>
+                ブラウザの最も根本的なセキュリティモデル。<strong>同じ Origin (scheme + host + port) でないリソースへの読み取りを禁止する</strong>。
+            </p>
+
+            <h3>Origin の定義</h3>
+            <table>
+                <thead><tr><th>URL</th><th>Origin</th><th>同一?</th></tr></thead>
+                <tbody>
+                    <tr><td><code>https://app.example.com/page1</code></td><td>https://app.example.com:443</td><td>基準</td></tr>
+                    <tr><td><code>https://app.example.com/page2</code></td><td>https://app.example.com:443</td><td>同一 (path は無関係)</td></tr>
+                    <tr><td><code>http://app.example.com/page1</code></td><td>http://app.example.com:80</td><td>別 (scheme 違い)</td></tr>
+                    <tr><td><code>https://api.example.com/page1</code></td><td>https://api.example.com:443</td><td>別 (host 違い)</td></tr>
+                    <tr><td><code>https://app.example.com:8080/</code></td><td>https://app.example.com:8080</td><td>別 (port 違い)</td></tr>
+                </tbody>
+            </table>
+
+            <h3>SOP が許可/禁止するもの</h3>
+            <table>
+                <thead><tr><th>操作</th><th>Cross-Origin</th><th>理由</th></tr></thead>
+                <tbody>
+                    <tr><td>iframe 埋め込み</td><td>許可 (表示のみ)</td><td>広告、埋め込みコンテンツ</td></tr>
+                    <tr><td>iframe 内容の読み取り</td><td><strong>禁止</strong></td><td>データ漏洩防止</td></tr>
+                    <tr><td>&lt;img&gt;, &lt;script&gt;, &lt;link&gt; 読み込み</td><td>許可</td><td>CDN、外部リソース</td></tr>
+                    <tr><td>fetch/XHR の response body 読み取り</td><td><strong>禁止</strong> (CORS なし時)</td><td>データ漏洩防止</td></tr>
+                    <tr><td>fetch/XHR の request 送信</td><td>許可 (Simple Request)</td><td>→ CSRF の原因</td></tr>
+                    <tr><td>Cookie の送信</td><td>条件付き (SameSite)</td><td>認証の自動付与</td></tr>
+                </tbody>
+            </table>
+
+            <h3>SOPの動作イメージ</h3>
+            <div class="mermaid">
+flowchart TD
+    subgraph same["Same Origin (https://app.example.com)"]
+        A[Page A] -->|"読み書き OK"| B[Page B]
+    end
+
+    subgraph cross["Cross Origin (https://evil.com)"]
+        C[Evil Page]
+    end
+
+    C -->|"Response 読み取り禁止"| A
+    C -->|"Request 送信は可能!"| A
+
+    Note["送信できる = CSRF の原因"]
+            </div>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: SOP の「��」</div>
+                <p>
+                    SOP は <strong>response の読み取りを禁止</strong> するが、<strong>request の送信は止められない</strong>。
+                    この非対称性が CSRF の根本原因。また、CORS で SOP を緩和しすぎると cross-origin data leak が成立する。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>CORS (Cross-Origin Resource Sharing)</h2>
+            <p>
+                SOP を「安全に」緩和する仕組み。サーバーが「このOriginからの読み取りは許可する」と明示する。
+            </p>
+
+            <h3>Simple Request vs Preflight</h3>
+            <table>
+                <thead><tr><th>条件</th><th>Simple Request</th><th>Preflight (OPTIONS) 必要</th></tr></thead>
+                <tbody>
+                    <tr><td>Method</td><td>GET, HEAD, POST のみ</td><td>PUT, DELETE, PATCH 等</td></tr>
+                    <tr><td>Headers</td><td>Accept, Content-Type (form系のみ) 等</td><td>Authorization, X-Custom-* 等</td></tr>
+                    <tr><td>Content-Type</td><td>form-urlencoded, multipart, text/plain</td><td>application/json 等</td></tr>
+                </tbody>
+            </table>
+
+            <h3>危険な CORS 設定パターン</h3>
+
+            <h4>Pattern 1: Origin Reflection</h4>
+<pre><code>Access-Control-Allow-Origin: [攻撃者のOriginをそのまま反射]
+Access-Control-Allow-Credentials: true</code></pre>
+            <p>
+                サーバーが <code>Origin</code> header の値をそのまま <code>ACAO</code> に返す。
+                <code>credentials: true</code> と組み合わさると、攻撃者サイトから被害者の認証済みデータを読み取れる。
+            </p>
+
+            <h4>Pattern 2: null Origin 許可</h4>
+<pre><code>Access-Control-Allow-Origin: null
+Access-Control-Allow-Credentials: true</code></pre>
+            <p>
+                <code>Origin: null</code> は sandboxed iframe (<code>&lt;iframe sandbox="allow-scripts"&gt;</code>) から発生する。
+                攻撃者が sandbox iframe 経由でリクエストを送ると CORS チェックをパスできる。
+            </p>
+
+            <h4>Pattern 3: サブドメイン trust</h4>
+<pre><code>// サーバー側の検証ロジック (脆弱)
+if (origin.endsWith('.example.com')) {
+    res.setHeader('ACAO', origin);
+}</code></pre>
+            <p>
+                <code>evil-example.com</code> は <code>.example.com</code> で終わるので通る。
+                正しくは <code>origin === 'https://app.example.com'</code> のように完全一致で検証する。
+            </p>
+
+            <div class="callout warning">
+                <div class="callout-title">mei-bb 実体験: CORS ≠ 自動的に脆弱</div>
+                <p>
+                    CORS が wide-open でも、認証が <strong>Bearer token (header-only)</strong> で Cookie を使わない場合は
+                    <code>credentials: include</code> しても意味がない（Cookie が自動送信されないため）。<br>
+                    BB で CORS を報告する前に「認証方式は Cookie ベースか?」を必ず確認すること。
+                    (参照: feedback_bb_cors_audit_sop / Tapple F1 false-positive 撤回)
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Cookie Attributes</h2>
+
+            <table>
+                <thead><tr><th>属性</th><th>効果</th><th>不在時のリスク</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td><code>HttpOnly</code></td>
+                        <td>JavaScript からの読み取りを禁止</td>
+                        <td>XSS で <code>document.cookie</code> 経由のセッション窃取</td>
+                    </tr>
+                    <tr>
+                        <td><code>Secure</code></td>
+                        <td>HTTPS 接続でのみ送信</td>
+                        <td>HTTP ダウングレードでの盗聴</td>
+                    </tr>
+                    <tr>
+                        <td><code>SameSite=Strict</code></td>
+                        <td>Cross-site request では一切送信しない</td>
+                        <td>—（最も安全）</td>
+                    </tr>
+                    <tr>
+                        <td><code>SameSite=Lax</code></td>
+                        <td>Top-level navigation の GET のみ送信</td>
+                        <td>POST CSRF は防げるが、GET ベースの state-changing 操作は守れない</td>
+                    </tr>
+                    <tr>
+                        <td><code>SameSite=None</code></td>
+                        <td>Cross-site でも送信 (Secure 必須)</td>
+                        <td>CSRF 可能 (別途 CSRF token が必要)</td>
+                    </tr>
+                    <tr>
+                        <td><code>Domain=.example.com</code></td>
+                        <td>全サブドメインに送信</td>
+                        <td>サブドメインの XSS で parent domain の Cookie 奪取</td>
+                    </tr>
+                    <tr>
+                        <td><code>Path=/admin</code></td>
+                        <td>指定パス以下でのみ送信</td>
+                        <td>iframe で迂回可能 — セキュリティ目的には使えない</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>SameSite によるCookie送信の違い</h3>
+            <div class="mermaid">
+flowchart TD
+    subgraph ss["Same-Site Request"]
+        A1["app.com のリンクをクリック"] -->|"Cookie: 送信される"| S1[Server]
+    end
+
+    subgraph lax["Cross-Site (SameSite=Lax)"]
+        B1["evil.com → app.com へGETリンク"] -->|"Cookie: 送信される"| S2[Server]
+        B2["evil.com → app.com へPOST form"] -->|"Cookie: 送信されない"| S3[Server]
+    end
+
+    subgraph strict["Cross-Site (SameSite=Strict)"]
+        C1["evil.com → app.com へGETリンク"] -->|"Cookie: 送信されない"| S4[Server]
+        C2["evil.com → app.com へPOST form"] -->|"Cookie: 送信されない"| S5[Server]
+    end
+            </div>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: SameSite の現状</div>
+                <p>
+                    Chrome 80 以降、<code>SameSite</code> 未指定時は <code>Lax</code> がデフォルト。
+                    つまり「SameSite 属性がない = CSRF 可能」は古い知識。
+                    現代の CSRF は SameSite bypass テクニック (method override, open redirect chain, cookie tossing) が必要。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Content Security Policy (CSP)</h2>
+
+            <h3>CSP の仕組み</h3>
+            <p>
+                サーバーが <code>Content-Security-Policy</code> header で「このページで実行を許可するリソースの出所」を宣言する。
+                XSS でスクリプトを注入しても、CSP が許可していない source からの実行はブラウザがブロックする。
+            </p>
+
+            <h3>主要な Directive</h3>
+            <table>
+                <thead><tr><th>Directive</th><th>制御対象</th><th>例</th></tr></thead>
+                <tbody>
+                    <tr><td><code>default-src</code></td><td>全リソースのフォールバック</td><td><code>'self'</code></td></tr>
+                    <tr><td><code>script-src</code></td><td>JavaScript</td><td><code>'self' 'nonce-abc123'</code></td></tr>
+                    <tr><td><code>style-src</code></td><td>CSS</td><td><code>'self' 'unsafe-inline'</code></td></tr>
+                    <tr><td><code>img-src</code></td><td>画像</td><td><code>* data:</code></td></tr>
+                    <tr><td><code>connect-src</code></td><td>fetch/XHR/WebSocket</td><td><code>'self' https://api.example.com</code></td></tr>
+                    <tr><td><code>frame-ancestors</code></td><td>この page を iframe で埋め込める親</td><td><code>'none'</code> (Clickjacking 防止)</td></tr>
+                    <tr><td><code>base-uri</code></td><td>&lt;base&gt; タグの href</td><td><code>'self'</code></td></tr>
+                </tbody>
+            </table>
+
+            <h3>CSP Bypass テクニック (概要)</h3>
+            <ul>
+                <li><strong><code>'unsafe-inline'</code></strong> がある → 通常の XSS payload が動く</li>
+                <li><strong><code>'unsafe-eval'</code></strong> がある → <code>eval()</code>, <code>setTimeout('code')</code> が使える</li>
+                <li><strong>Whitelisted domain に JSONP endpoint</strong> → <code>&lt;script src="trusted.com/jsonp?callback=alert(1)"&gt;</code></li>
+                <li><strong>base-uri 未指定</strong> → <code>&lt;base href="https://evil.com/"&gt;</code> で相対パスのスクリプト読み込みをハイジャック</li>
+                <li><strong>Nonce reuse / Nonce leak</strong> → nonce が固定値 or response に漏れている</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Referrer Policy</h2>
+            <p>
+                <code>Referrer-Policy</code> header がブラウザの <code>Referer</code> 送信動作を制御する。
+                URL に token が含まれる場合 (<code>?token=secret</code>)、
+                <code>Referrer-Policy: no-referrer</code> でないと外部リンクから token が漏洩する。
+            </p>
+            <table>
+                <thead><tr><th>Policy</th><th>Cross-origin で送る情報</th></tr></thead>
+                <tbody>
+                    <tr><td><code>no-referrer</code></td><td>何も送らない</td></tr>
+                    <tr><td><code>origin</code></td><td>Origin のみ (path なし)</td></tr>
+                    <tr><td><code>strict-origin-when-cross-origin</code></td><td>同一origin = full URL, cross-origin = origin のみ (デフォルト)</td></tr>
+                    <tr><td><code>unsafe-url</code></td><td>常に full URL — 危険</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>SOP は「読み取り禁止」であって「送信禁止」ではない</strong> → CSRF の根本原因</li>
+                    <li><strong>CORS misconfig</strong> は「認証方式が Cookie ベース」かつ「credentials: true」のときだけ実質的な脅威</li>
+                    <li><strong>SameSite=Lax がデフォルト</strong> → 現代の CSRF は bypass テクニックが必須</li>
+                    <li><strong>CSP は万能ではない</strong> → unsafe-inline, JSONP whitelisted domain, base-uri 未指定 で bypass 可能</li>
+                    <li><strong>Cookie の Domain 属性</strong> → サブドメイン XSS で全ドメインの session を奪える</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>WSA Labs</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/cors" target="_blank">CORS vulnerability labs</a></li>
+                <li><a href="https://portswigger.net/web-security/csrf" target="_blank">CSRF labs</a> (SameSite bypass 含む)</li>
+                <li><a href="https://portswigger.net/web-security/clickjacking" target="_blank">Clickjacking labs</a></li>
+            </ul>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="01-browser" onclick="toggleComplete('01-browser')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="00-http-fundamentals.html">&larr; 前: HTTP Protocol</a>
+            <a href="02-authentication.html">次: Authentication & Session &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

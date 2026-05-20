@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Platform Operations - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .platform-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.5rem; margin-bottom:1.5rem; }
+        .platform-card h3 { color:var(--accent); margin-bottom:0.8rem; display:flex; align-items:center; gap:0.5rem; }
+        .platform-card .meta { font-size:0.85rem; color:var(--text-muted); margin-bottom:0.8rem; }
+        .criteria-table td:first-child { font-weight:600; white-space:nowrap; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 5: Operations &gt; Platform Operations
+        </div>
+
+        <div class="page-header">
+            <h1>Platform Operations</h1>
+            <p class="subtitle">
+                各 BB platform の特性、運用ルール、選択基準を理解する。
+                Platform の選択は戦略の根幹。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+            </div>
+        </div>
+
+        <!-- HackerOne -->
+        <div class="section">
+            <h2>主要 Platform</h2>
+
+            <div class="platform-card">
+                <h3>HackerOne</h3>
+                <div class="meta">世界最大の BB platform | 米国拠点 | W-8BEN 必要</div>
+                <h4>Signal / Reputation System</h4>
+                <ul>
+                    <li><strong>Signal:</strong> レポート品質の指標。Resolved=+, N/A=-5, Spam=-10, Dup=除外</li>
+                    <li><strong>Reputation:</strong> 累積ポイント。Private invite の閾値に影響</li>
+                    <li>Signal > 1.0 を維持することが最優先</li>
+                </ul>
+                <h4>Program Types</h4>
+                <ul>
+                    <li><strong>Managed:</strong> HackerOne triage team が一次対応。Response SLA あり。高品質だが bounty も高い</li>
+                    <li><strong>Self-serve:</strong> 企業が直接 triage。Response time は企業次第</li>
+                </ul>
+                <h4>Bounty Table</h4>
+                <p>Program ごとに severity-based table。Critical: $5K-$50K+, High: $2K-$15K, Medium: $500-$5K, Low: $100-$1K（program による）</p>
+                <h4>Private Invites</h4>
+                <p>Signal + activity + past performance に基づいて invite される。招待制 program は competition が低い = dup 率が低い。</p>
+            </div>
+
+            <div class="platform-card">
+                <h3>Intigriti</h3>
+                <div class="meta">ヨーロッパ中心 | ベルギー拠点 | GDPR 文化</div>
+                <h4>特徴</h4>
+                <ul>
+                    <li>Triage 品質が高い（専門チームが迅速に判定）</li>
+                    <li>European 企業が多い（Telco, Banking, eCommerce）</li>
+                    <li>Severity-based payout</li>
+                </ul>
+                <h4>AI Disclosure Requirement (2026-03)</h4>
+                <ul>
+                    <li>CoC 更新で AI 使用の when/how disclosure が<strong>必須</strong></li>
+                    <li>違反 = report close + platform 除外の可能性</li>
+                    <li>「AI was used for: code analysis, PoC validation」のように具体的に記載</li>
+                    <li>Submission limits も同時導入 &mdash; 品質重視の方針</li>
+                </ul>
+            </div>
+
+            <div class="platform-card">
+                <h3>IssueHunt</h3>
+                <div class="meta">#1 Japan BB Platform | 日本語対応 | 16 paid programs</div>
+                <h4>主要プログラム</h4>
+                <ul>
+                    <li>SORACOM, ABEMA, bitFlyer, LINE WORKS, Tapple 等</li>
+                    <li>日本企業が多い = 日本語でのコミュニケーション可能な場合あり</li>
+                    <li>Competition が HackerOne より低い</li>
+                </ul>
+                <h4>注意点</h4>
+                <ul>
+                    <li>Program 数が限定的（16 paid public programs）</li>
+                    <li>日本の法律が適用される（不正アクセス禁止法に注意）</li>
+                    <li>Program list API で最新状況を確認可能</li>
+                </ul>
+            </div>
+
+            <div class="platform-card">
+                <h3>huntr</h3>
+                <div class="meta">OSS 特化 | AI/ML repos が豊富 | Source code audit</div>
+                <h4>特徴</h4>
+                <ul>
+                    <li>OSS リポジトリが対象 &mdash; ソースコードが完全に読める</li>
+                    <li>AI/ML フレームワーク (LangChain, LiteLLM, etc.) が多い</li>
+                    <li>Disclose form: <code>/bounties/disclose</code>（旧 <code>/repos/{owner}/{repo}/bounties/disclose</code> は 404）</li>
+                    <li>Report format: Description + Impact + Occurrences を 1 ファイルで</li>
+                </ul>
+                <h4>Bounty</h4>
+                <p>$50-$500 が中心。Critical RCE で $1,500-$3,000 程度。金額は低いが Signal 蓄積に有効。</p>
+            </div>
+
+            <div class="platform-card">
+                <h3>Bugcrowd</h3>
+                <div class="meta">米国拠点 | VRT (Vulnerability Rating Taxonomy)</div>
+                <h4>特徴</h4>
+                <ul>
+                    <li>VRT で severity を標準化（program 独自の判定基準を上書き）</li>
+                    <li>Severity-based payout（P1-P4）</li>
+                    <li>Researcher-friendly な reputation system</li>
+                </ul>
+            </div>
+
+            <div class="platform-card">
+                <h3>GHSA (GitHub Security Advisory)</h3>
+                <div class="meta">GitHub native | Bounty なし | Portfolio 構築用</div>
+                <h4>特徴</h4>
+                <ul>
+                    <li>Private vulnerability reporting で maintainer に直接報告</li>
+                    <li>CVE 番号の自動採番が可能</li>
+                    <li>Bounty はないが、公開された advisory は portfolio として有効</li>
+                    <li>OSS への貢献実績として GitHub profile に表示される</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Selection Criteria -->
+        <div class="section">
+            <h2>Program 選択基準</h2>
+            <table class="criteria-table">
+                <thead><tr><th>基準</th><th>内容</th><th>Priority</th></tr></thead>
+                <tbody>
+                    <tr><td>Response Time</td><td>Triage median time が 7日以内が理想。30日超は避ける</td><td>High</td></tr>
+                    <tr><td>Bounty Range</td><td>自分の skill level に見合った報酬。初期は金額より Signal 重視</td><td>Medium</td></tr>
+                    <tr><td>Scope Size</td><td>広い scope = 多くの attack surface。ただし competition も高い</td><td>Medium</td></tr>
+                    <tr><td>Competition Level</td><td>参加者数が少ない = dup 率が低い。Private program が理想</td><td>High</td></tr>
+                    <tr><td>Tech Stack</td><td>自分が得意な技術スタック (Rails, Node.js, Python 等)</td><td>High</td></tr>
+                    <tr><td>Past Disclosures</td><td>過去の公開レポートから vuln class の傾向を学べる</td><td>Low</td></tr>
+                </tbody>
+            </table>
+
+            <h3>初心者向け戦略</h3>
+            <ol>
+                <li>huntr (OSS) でソースコード監査のスキルを磨く</li>
+                <li>Low-competition program で Signal を蓄積</li>
+                <li>Signal > 1.0 になったら HackerOne の public program へ</li>
+                <li>Private invite を得たら competition が低い program で bounty を狙う</li>
+            </ol>
+        </div>
+
+        <!-- Platform Comparison -->
+        <div class="section">
+            <h2>Platform 比較表</h2>
+            <table>
+                <thead><tr><th>Platform</th><th>Focus</th><th>Bounty Range</th><th>Competition</th><th>向いている人</th></tr></thead>
+                <tbody>
+                    <tr><td>HackerOne</td><td>Web/Mobile/API</td><td>$100-$50K+</td><td>Very High</td><td>経験者、Signal 重視</td></tr>
+                    <tr><td>Intigriti</td><td>EU企業</td><td>EUR100-EUR25K</td><td>Medium</td><td>EU法規制に詳しい人</td></tr>
+                    <tr><td>IssueHunt</td><td>日本企業</td><td>JPY5K-JPY500K</td><td>Low</td><td>日本語ネイティブ</td></tr>
+                    <tr><td>huntr</td><td>OSS/AI-ML</td><td>$50-$3K</td><td>Medium</td><td>Source code 読める人</td></tr>
+                    <tr><td>Bugcrowd</td><td>多業種</td><td>$100-$30K</td><td>High</td><td>VRT理解者</td></tr>
+                    <tr><td>GHSA</td><td>OSS</td><td>$0</td><td>Low</td><td>Portfolio 構築</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Account Setup -->
+        <div class="section">
+            <h2>Account Setup Checklist</h2>
+            <ul>
+                <li><strong>HackerOne:</strong> Profile 充実 (bio, skills, certifications)、W-8BEN 提出、2FA 有効化</li>
+                <li><strong>Intigriti:</strong> KYC verification (EU 要件)、AI disclosure テンプレ準備</li>
+                <li><strong>IssueHunt:</strong> 日本語 profile、銀行口座情報</li>
+                <li><strong>huntr:</strong> GitHub 連携、notification 設定</li>
+                <li><strong>共通:</strong> Dedicated email (BB 専用)、VPN 設定確認、Burp Pro ライセンス</li>
+            </ul>
+        </div>
+
+        <!-- Response Time Tips -->
+        <div class="section">
+            <h2>Response Time の読み方</h2>
+            <p>Program の response time は BB 体験に直結する。確認すべき指標:</p>
+            <ul>
+                <li><strong>Time to First Response:</strong> 最初の返信までの時間。7日以内が理想</li>
+                <li><strong>Time to Triage:</strong> Triaged ステータスまでの時間。Managed program は通常 1-3日</li>
+                <li><strong>Time to Bounty:</strong> Bounty 支払いまでの時間。Program による差が大きい (1週間〜6ヶ月)</li>
+                <li><strong>Time to Resolution:</strong> Fix + Close までの時間。内部の dev cycle に依存</li>
+            </ul>
+            <p>HackerOne では program page に median response time が表示される。これを必ず確認してから submit。</p>
+        </div>
+
+        <!-- Navigation -->
+        <div class="section" style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border); padding-top:1.5rem;">
+            <a href="52-dup-avoidance.html">&larr; Prev: Dup Avoidance</a>
+            <button class="complete-btn" data-module-id="53-platform" onclick="toggleComplete('53-platform')">Mark Complete</button>
+            <a href="54-ai-slop.html">Next: AI Slop Avoidance &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

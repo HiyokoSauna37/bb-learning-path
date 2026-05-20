@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hunter's Mindset - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .principle-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.2rem; margin-bottom:1rem; }
+        .principle-card h4 { color:var(--accent); margin-bottom:0.5rem; }
+        .motivation-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px,1fr)); gap:1rem; margin:1rem 0; }
+        .motivation-item { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1rem; text-align:center; }
+        .motivation-item h4 { color:var(--green); font-size:0.95rem; margin-bottom:0.5rem; }
+        .motivation-item p { font-size:0.85rem; color:var(--text-muted); }
+        .decision-table td:first-child { font-weight:600; color:var(--yellow); }
+        .karpathy { background:var(--purple-dim); border:1px solid var(--purple); border-radius:8px; padding:1.5rem; margin:1.5rem 0; }
+        .karpathy h3 { color:var(--purple); margin-bottom:1rem; }
+        .timeline-box { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.2rem; margin:1rem 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 5: Operations &gt; Hunter's Mindset
+        </div>
+
+        <div class="page-header">
+            <h1>Hunter's Mindset</h1>
+            <p class="subtitle">
+                BB を持続可能な practice として継続するためのメンタルモデル。
+                Motivation management、session discipline、long-term strategy。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+            </div>
+        </div>
+
+        <!-- Motivation -->
+        <div class="section">
+            <h2>Why Bug Bounty</h2>
+            <p>BB を続ける理由を明確にしておく。モチベーションが落ちた時に立ち戻る場所。</p>
+
+            <div class="motivation-grid">
+                <div class="motivation-item">
+                    <h4>Skill Building</h4>
+                    <p>Real-world の攻撃手法を学ぶ最速の方法。CTF より実践的</p>
+                </div>
+                <div class="motivation-item">
+                    <h4>Income</h4>
+                    <p>副収入源。SOC analyst の知識が直接活きる</p>
+                </div>
+                <div class="motivation-item">
+                    <h4>Community</h4>
+                    <p>世界中の hunter との交流。知識共有の文化</p>
+                </div>
+                <div class="motivation-item">
+                    <h4>Resume</h4>
+                    <p>CVE/Advisory = 客観的な実績。転職・昇進に有利</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Session Budget -->
+        <div class="section">
+            <h2>Session Discipline</h2>
+
+            <h3>Session Budget Rule</h3>
+            <ul>
+                <li><strong>Max 2 pivots per session</strong> &mdash; 3回目の pivot が必要になったら session 終了</li>
+                <li>Session 終了 = human step (account creation, environment setup 等) を挟む</li>
+                <li>無限に rabbit hole に入るのを防ぐ仕組み</li>
+            </ul>
+
+            <h3>5-Minute Rule (Anti-Bot Wall)</h3>
+            <table class="decision-table">
+                <thead><tr><th>状況</th><th>判断</th></tr></thead>
+                <tbody>
+                    <tr><td>403 + large body</td><td>Anti-bot wall。5分以内に pivot 判定</td></tr>
+                    <tr><td>Rate limited</td><td>Wait or pivot。自動化では突破不可</td></tr>
+                    <tr><td>OAuth account 作成失敗</td><td>Vendor server side issue。即諦め</td></tr>
+                    <tr><td>PoC 環境構築に30分超</td><td>Cost-benefit 再評価。Bootstrap helper がなければ pivot</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Pivot vs Persist</h3>
+            <table>
+                <thead><tr><th>Persist (続ける)</th><th>Pivot (切り替える)</th></tr></thead>
+                <tbody>
+                    <tr><td>仮説が明確で検証手段がある</td><td>仮説が曖昧で次の手がない</td></tr>
+                    <tr><td>PoC が部分的に動いている</td><td>基本的な recon すら通らない</td></tr>
+                    <tr><td>Prior advisory で variant が期待できる</td><td>Program が anti-bot で完全ブロック</td></tr>
+                    <tr><td>1-2 step で検証完了する</td><td>検証に3+ step 必要で各 step が不確実</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Learning from Failure -->
+        <div class="section">
+            <h2>失敗から学ぶ</h2>
+            <p>BB の failure mode (withdrawal, dup, N/A) は全て学習機会。</p>
+
+            <h3>Withdrawal (撤回)</h3>
+            <ul>
+                <li>AI Slop pattern を1つ発見した = 次回は同じ mistake を避けられる</li>
+                <li>撤回理由を <code>_submission_log.md</code> に記録する</li>
+                <li>mei-bb の 6件撤回は 25+ の aislop-gate pattern に結実した</li>
+            </ul>
+
+            <h3>Duplicate</h3>
+            <ul>
+                <li>Dup = 自分の finding が valid だった証明。Timing が遅かっただけ</li>
+                <li>Signal には影響しない（excluded from calculation）</li>
+                <li>Dup zone として記録し、次回は同じ area を避ける</li>
+            </ul>
+
+            <h3>N/A (Not Applicable)</h3>
+            <ul>
+                <li>N/A = submit 判断の質を上げる signal。Signal -5 のダメージは大きい</li>
+                <li>「なぜ N/A だったか」を分析し、submit gate を強化する</li>
+                <li>1件の N/A から得られる教訓 > 5件の dup から得られる教訓</li>
+            </ul>
+        </div>
+
+        <!-- Competition Mindset -->
+        <div class="section">
+            <h2>Competition Mindset</h2>
+            <ul>
+                <li><strong>Racing yourself, not others.</strong> 他の hunter と competition しても意味がない。昨日の自分より 1 step 進む</li>
+                <li>Top hunter の disclosed report を読んで「なぜ自分は見つけられなかったか」を分析</li>
+                <li>自分の得意分野を持つ（全方位は non-sustainable）</li>
+                <li>「量」ではなく「深さ」で差別化する</li>
+            </ul>
+        </div>
+
+        <!-- Sustainable Practice -->
+        <div class="section">
+            <h2>持続可能な Practice</h2>
+
+            <div class="timeline-box">
+                <h4>Weekly Minimum</h4>
+                <ul>
+                    <li>1 session/week (2-3時間) を minimum として維持</li>
+                    <li>Daily: news digest (bb-news-digest) で最新 advisory をチェック (5分)</li>
+                    <li>Weekly: 1 target に対して Phase 0-1 を実施</li>
+                    <li>Monthly: submission log の振り返り、tooling の改善</li>
+                </ul>
+            </div>
+
+            <div class="timeline-box">
+                <h4>Burnout Prevention</h4>
+                <ul>
+                    <li>Bounty = 0 の月があっても OK。Signal 蓄積期間と割り切る</li>
+                    <li>本業 (SOC) に支障が出たら BB は一時停止</li>
+                    <li>「見つからない日」が続いても焦らない。全ての session が training</li>
+                    <li>Small wins を記録する（新しい pattern を学んだ、tool を改善した等）</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Karpathy 4 Principles -->
+        <div class="section">
+            <h2>Karpathy 4 Principles</h2>
+
+            <div class="karpathy">
+                <h3>BB adapted version of Karpathy's research principles</h3>
+
+                <div class="principle-card">
+                    <h4>1. Verify Before Claiming</h4>
+                    <p>仮説を claim する前に必ず検証する。「コードに脆弱に見えるパターンがある」は claim ではない。「実機で exploit を再現した」が claim。</p>
+                </div>
+
+                <div class="principle-card">
+                    <h4>2. Boring First</h4>
+                    <p>派手な attack chain より、boring だが確実な finding を優先。IDOR, auth bypass, info disclosure は地味だが bounty が出る。Novel な手法は signal が安定してから。</p>
+                </div>
+
+                <div class="principle-card">
+                    <h4>3. Surgical Hypothesis</h4>
+                    <p>広範囲な fuzzing より、surgical な仮説を立てて検証。「この endpoint の この parameter は型チェックが甘い」レベルの具体性で攻める。</p>
+                </div>
+
+                <div class="principle-card">
+                    <h4>4. Submit-Gateable Evidence</h4>
+                    <p>Submit gate を通過できる水準の evidence だけを集める。「多分 vulnerable」の段階で submit しない。bb-submit-gate の 8 gates を全て PASS する evidence を用意する。</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Long-term Strategy -->
+        <div class="section">
+            <h2>Long-term Strategy</h2>
+
+            <h3>3-Phase Career Path</h3>
+            <ol>
+                <li><strong>Signal 蓄積期 (現在)</strong>
+                    <ul>
+                        <li>huntr/GHSA で OSS source code audit のスキルを磨く</li>
+                        <li>Low-competition program で確実な finding を submit</li>
+                        <li>Signal > 1.0 を達成・維持</li>
+                        <li>bb-toolkit の習熟</li>
+                    </ul>
+                </li>
+                <li><strong>Private Invite 期</strong>
+                    <ul>
+                        <li>Signal > 1.0 + activity で private invite を獲得</li>
+                        <li>Competition が低い private program で bounty 率を上げる</li>
+                        <li>得意分野（auth bypass, IDOR, logic flaw）を確立</li>
+                    </ul>
+                </li>
+                <li><strong>安定 Bounty 期</strong>
+                    <ul>
+                        <li>Private program で安定的に bounty を獲得</li>
+                        <li>年間 20万円超を達成 → 確定申告</li>
+                        <li>Community での reputation 構築</li>
+                        <li>Disclosed report で portfolio を充実</li>
+                    </ul>
+                </li>
+            </ol>
+
+            <h3>2026 Strategy (mei-bb)</h3>
+            <ul>
+                <li><strong>Signal accumulation</strong> &mdash; 品質重視で positive signal を積む</li>
+                <li><strong>Logic chain pivot</strong> &mdash; Pattern-based (XSS/SQLi) から logic flaw に移行</li>
+                <li><strong>Verifiable sink demo</strong> &mdash; 全ての submit に E2E PoC を付ける</li>
+            </ul>
+        </div>
+
+        <!-- Navigation -->
+        <div class="section" style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border); padding-top:1.5rem;">
+            <a href="58-workflow-tooling.html">&larr; Prev: Workflow &amp; Tooling</a>
+            <button class="complete-btn" data-module-id="59-mindset" onclick="toggleComplete('59-mindset')">Mark Complete</button>
+            <a href="../index.html">Back to Index &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

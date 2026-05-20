@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Submit or Withdraw? (上級) - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; Submit or Withdraw? (上級)
+        </div>
+        <div class="page-header">
+            <h1>Submit or Withdraw? (上級)</h1>
+            <p class="subtitle">5 questions - 上級 - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../quiz.html">&larr; Quiz 一覧</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-adv-triage', [
+        {
+            question: "発見: CORSが任意のOriginを許可し、credentials: trueが設定されている。ただし認証はAuthorizationヘッダーのBearerトークンで行われている（Cookieは不使用）。報告すべきか？",
+            options: [
+                "はい - CORS misconfigurationは常にセキュリティ脆弱性",
+                "いいえ - ブラウザはcross-origin requestでAuthorizationヘッダーを自動送信しないため、CORS+credentialsの組み合わせでも悪用できない",
+                "はい - credentialsモードでfetchすればAuthorizationヘッダーも送信される",
+                "状況による - トークンがlocalStorageに保存されている場合はXSSとチェーンできる"
+            ],
+            answer: 1,
+            explanation: "CORS + credentials: trueが危険なのは、ブラウザがCookieを自動的に付与するケース。Bearerトークンはブラウザが自動送信せず、JavaScriptで明示的に設定する必要がある。攻撃者のサイトからcross-originリクエストを発行しても、被害者のBearerトークンは付与されない。CORS設定自体は脆弱だが、認証がheader-onlyの場合は実質的なインパクトがない。これはai-slopの典型例。"
+        },
+        {
+            question: "発見: /admin/metrics エンドポイントに認証なしでアクセス可能。Prometheusメトリクス（リクエスト数、メモリ使用量、レスポンスタイム等）が返される。PIIは含まれない。報告すべきか？",
+            options: [
+                "Critical - 認証なしで管理エンドポイントにアクセスできる",
+                "High - 内部アーキテクチャ情報が漏洩している",
+                "Informative/Low - PII漏洩なし・運用メトリクスのみで、CIA impactが極めて限定的。プログラムのinformation disclosureの定義を確認",
+                "報告しない - メトリクスは脆弱性ではない"
+            ],
+            answer: 2,
+            explanation: "Prometheusメトリクスのみ（PII/秘密鍵/内部IP等を含まない場合）は、情報漏洩としての影響が限定的。多くのプログラムではInformativeまたはLowに分類される。ただし、プログラムによっては「unauthenticated access to admin endpoints」としてMediumにする場合もある。過剰なseverity主張は避け、実際のデータ内容に基づいて正直に報告する。"
+        },
+        {
+            question: "発見: Path Traversalで/etc/passwdが読み取れる。ただしターゲットはDockerコンテナ内で動作しており、非rootユーザーで実行されている。報告すべきか？",
+            options: [
+                "はい - Critical。/etc/passwdの読み取りは常にCritical",
+                "はい - ただしseverityはMedium程度。コンテナ環境であること、非rootであることを正直に記載し、読み取り可能なファイルの範囲をデモする",
+                "いいえ - Dockerコンテナ内では/etc/passwdに機密情報がないため報告価値なし",
+                "はい - コンテナ脱出のPoC（/proc/self/root等）も作成してからCriticalで報告"
+            ],
+            answer: 1,
+            explanation: "Path Traversalの存在自体は脆弱性として有効。ただしDocker+非rootの環境では、/etc/passwdにはユーザー一覧しかなく（パスワードハッシュは/etc/shadowで読めない）、コンテナ外へのアクセスも困難。正直に環境制約を記載し、アプリケーション設定ファイル・環境変数ファイル・ソースコード等の読み取り可否を追加デモすることでseverityを正当化する。"
+        },
+        {
+            question: "発見: GHSAに「v2.1で修正済み」と記載されたPath Traversal脆弱性を、v2.1上で再現できた。報告すべきか？",
+            options: [
+                "いいえ - アドバイザリが「修正済み」と言っているので自分のテスト環境に問題がある可能性が高い",
+                "はい - ただし追加の環境調査をしてから報告する（2-3日かけて確認）",
+                "はい - 即座に報告する。Regressionまたはincomplete fixであり、受理される可能性が非常に高い",
+                "他のバージョン（v2.0, v2.2）でも確認してから報告する"
+            ],
+            answer: 2,
+            explanation: "「修正済みバージョンで再現可能」はregression（修正が取り消された）かincomplete fix（修正が不十分で別パスから同じ脆弱性が到達可能）のいずれか。どちらもvendorにとって重要度が高く、受理される確率が極めて高い。他の研究者も同じパターンを狙っているため、早期報告が重要。PoC環境がおかしい可能性はゼロではないが、再現手順が明確ならすぐ提出。"
+        },
+        {
+            question: "発見: デシリアライゼーション経由のRCEが可能。ただしトリガーにはadminアカウントでのログインが必要（admin権限で特定の設定ページからペイロードを送信）。報告すべきか？",
+            options: [
+                "はい - RCEは常にCriticalで報告",
+                "いいえ - admin権限が前提ならば「admin can admin」で脆弱性ではない",
+                "はい - admin権限の前提条件を正直に記載し、admin-to-server-compromise（権限分離の破壊）としてseverityを説明する",
+                "admin権限を不正取得する方法（IDORやprivilege escalation）も見つけてからチェーンで報告する"
+            ],
+            answer: 2,
+            explanation: "Admin-to-RCEは多くのプログラムで有効な脆弱性として認められる。理由: (1) adminはアプリケーション管理権限であり、サーバーOS上でのコード実行権限ではない（権限分離の破壊）、(2) 侵害されたadminアカウントからの被害範囲を限定する防御層が機能していない。ただしseverityはCriticalではなくHigh〜Medium。前提条件を正直に書かないとcredibility損失。"
+        }
+    ]);
+    </script>
+</body>
+</html>

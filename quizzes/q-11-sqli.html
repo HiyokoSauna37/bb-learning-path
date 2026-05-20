@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQL Injection - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; SQL Injection
+        </div>
+        <div class="page-header">
+            <h1>SQL Injection</h1>
+            <p class="subtitle">5 questions - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../modules/11-sqli.html">&larr; Module に戻る</a>
+            <a href="../quiz.html">Quiz 一覧 &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-11-sqli', [
+        {
+            question: "SQLインジェクションの存在を検知するための最もシンプルなテストは何か？",
+            options: [
+                "1=1を入力してすべてのデータが返るか確認する",
+                "シングルクォート(')を入力してエラーやレスポンスの変化を観察する",
+                "UNION SELECTを入力してカラム数を推測する",
+                "-- (コメント)を入力してクエリの残りが無視されるか確認する"
+            ],
+            answer: 1,
+            explanation: "シングルクォート(')はSQLの文字列リテラルを閉じるため、SQLi脆弱性があればクエリ構文エラーを引き起こす。500エラー、異なるエラーメッセージ、レスポンスの変化等で脆弱性の存在を示唆する。1=1やUNIONは脆弱性が確認された後のエクスプロイトテクニックであり、最初の検知には'が最もシンプルかつ効果的。"
+        },
+        {
+            question: "UNION-based SQLインジェクションを成功させるために、攻撃者が事前に把握しなければならない情報は何か？",
+            options: [
+                "テーブル名とカラム名",
+                "元のクエリが返すカラムの数（およびデータ型の互換性）",
+                "データベースの種類（MySQL, PostgreSQL等）",
+                "アプリケーションが使用しているORMの種類"
+            ],
+            answer: 1,
+            explanation: "UNIONは2つのSELECT結果を結合するため、両方のSELECTが同じカラム数を返す必要がある。攻撃者はまずORDER BY N（Nを増やしてエラーが出る値を探す）やUNION SELECT NULL,NULL,...でカラム数を特定する。テーブル名やDB種類は有用だが後から情報スキーマ等で取得可能。カラム数が合わないとUNIONは構文エラーになる。"
+        },
+        {
+            question: "Time-based Blind SQLインジェクションはどのように脆弱性の存在を確認するか？",
+            options: [
+                "レスポンスのHTTPステータスコードの違い（200 vs 500）",
+                "条件付きSLEEP/WAITFOR関数による応答時間の差異",
+                "レスポンスボディのコンテンツ長の変化",
+                "Set-Cookieヘッダーの有無"
+            ],
+            answer: 1,
+            explanation: "Time-based Blind SQLiは、条件式とSLEEP関数を組み合わせる（例：IF(1=1, SLEEP(5), 0)）。条件がTRUEの場合のみレスポンスが遅延する。Boolean-basedと異なりレスポンスの内容が完全に同一でも検知可能だが、ネットワーク遅延との区別のために十分な遅延時間の設定と複数回の試行が必要。"
+        },
+        {
+            question: "プリペアドステートメント（パラメータ化クエリ）がSQLインジェクションを防ぐ根本的なメカニズムは何か？",
+            options: [
+                "入力値をエスケープ処理して特殊文字を無害化する",
+                "SQL文の構造（テンプレート）とデータ（パラメータ）を分離し、データがSQL構文として解釈されることを防ぐ",
+                "入力値の長さを制限してペイロードの注入を防ぐ",
+                "データベースへの接続に読み取り専用権限を使用する"
+            ],
+            answer: 1,
+            explanation: "プリペアドステートメントの本質は「構造とデータの分離」。SQL文のテンプレートが先にDBに送られてコンパイルされ、後からパラメータが純粋なデータとしてバインドされる。パラメータは決してSQL構文として再解釈されない。エスケープはブラックリスト的アプローチであり漏れが発生しうるが、パラメータ化は構造的に安全。"
+        },
+        {
+            question: "Second-order SQLインジェクションが通常のSQLiと異なる点として正しいのはどれか？",
+            options: [
+                "2回のリクエストが必要で、1回目で認証、2回目でペイロードを送る",
+                "ペイロードが一旦データベースに保存され、別の処理で読み出されてクエリに組み込まれる時に発火する",
+                "2つの異なるSQLクエリを同時に実行するスタックドクエリの手法である",
+                "2つの異なるテーブルを結合するJOINを使った攻撃手法である"
+            ],
+            answer: 1,
+            explanation: "Second-order SQLiは、入力時にはエスケープ/パラメータ化されて安全に保存されるが、後からそのデータを読み出して別のクエリに組み込む際にパラメータ化されていない場合に発火する。例：ユーザー登録時に名前として「admin'--」を保存→パスワード変更機能がその名前を動的クエリに組み込み→SQLi発動。保存→発火の2段階が特徴。"
+        }
+    ]);
+    </script>
+</body>
+</html>

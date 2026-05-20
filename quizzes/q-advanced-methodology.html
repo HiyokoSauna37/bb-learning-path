@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hunting Methodology & Strategy (上級) - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; Hunting Methodology & Strategy (上級)
+        </div>
+        <div class="page-header">
+            <h1>Hunting Methodology & Strategy (上級)</h1>
+            <p class="subtitle">5 questions - 上級 - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../quiz.html">&larr; Quiz 一覧</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-adv-method', [
+        {
+            question: "3時間のBBセッション。ターゲットには200サブドメイン、GraphQL API、モバイルアプリ、公開ソースコードがある。最もROIが高い開始点は？",
+            options: [
+                "200サブドメインの列挙とスキャンから始める（広い攻撃面を把握するため）",
+                "GraphQL APIのIntrospectionとクエリ探索から始める（APIは見落とされがち）",
+                "公開ソースコードの監査から始める（1時間あたりの有効バグ発見率が最も高い）",
+                "モバイルアプリのデコンパイルから始める（隠しエンドポイントが見つかるため）"
+            ],
+            answer: 2,
+            explanation: "ソースコードが公開されている場合、コード監査は最もROIが高い。理由: (1) 脆弱性パターンを直接grep検索できる、(2) 最近のadvisoryがあれば修正の不完全性や同一パターンのsibling調査が可能、(3) 認証ロジック・入力バリデーションを網羅的に把握可能。サブドメイン列挙は3時間では消化しきれず、モバイルデコンパイルはセットアップに時間がかかる。"
+        },
+        {
+            question: "プログラムの報奨金: Medium=$500, High=$2000, Critical=$5000。Mediumの脆弱性を発見した。Highへのチェーンを試みるべきか？",
+            options: [
+                "必ず試みるべき - $500と$2000の差は大きい",
+                "チェーンに明確なパスがあり1時間以内で検証可能なら試みる。不明確なら先にMediumを提出する",
+                "チェーンは試みない - 誰かに先にbase bugを取られるリスクが高い",
+                "Mediumを提出した後にチェーンを別レポートとして追加提出する"
+            ],
+            answer: 1,
+            explanation: "リスクとリターンのバランス判断。チェーンに明確なパス（例: IDORで取得したtokenをATO実証に使える等）があり短時間で検証できるなら試みる価値がある（$500→$2000）。しかし推測的で数日かかる可能性がある場合、その間に他のハンターが同じbase bugを見つけてdupになるリスクがある。「確実な$500」を確保してからチェーン調査する選択肢もある。"
+        },
+        {
+            question: "2時間のリコンで発見: Open Redirect 1件、バージョンリーク（情報漏洩）1件、exploitable bug 0件。次のアクションは？",
+            options: [
+                "Open RedirectをOAuthフローとチェーンできないか最後の確認をし、ダメなら別のターゲットか角度にpivotする",
+                "さらに2時間リコンを深掘りする（まだ見つけていない面があるはず）",
+                "Open Redirectとバージョンリークを2件報告する",
+                "Nucleiやffufでもう少し自動スキャンを回す"
+            ],
+            answer: 0,
+            explanation: "2時間のリコンで低影響のみ = このターゲットは十分に防御されている可能性が高い。ただしOpen Redirectは唯一のchain potentialなので、OAuth/SSO連携を最後にチェックする価値はある。それが不可なら、同じプログラムの別asset（mobile API, 別subdomain）にpivotするか、別プログラムに移行。Informativeを量産するとSignalが下がる。sunk cost fallacyに陥らないこと。"
+        },
+        {
+            question: "レポート提出から10日間レスポンスなし。プログラムSLAは「5 business days for first response」。取るべきアクションは？",
+            options: [
+                "SLA違反として即座にプラットフォームにエスカレーションする",
+                "10暦日 = 7-8営業日。SLAの1.5倍（7-8営業日）まで待ち、丁寧にステータス確認のコメントを追加する",
+                "バグをフルディスクロージャーとして公開する（SLA違反のため）",
+                "同じバグを別の方法でもう一度報告する"
+            ],
+            answer: 1,
+            explanation: "10暦日 = 約7-8営業日であり、SLAの5営業日は少し超過しているが、祝日や社内事情を考慮すると即エスカレーションは早計。SLAの50%グレース（7-8営業日）を待ち、丁寧に「ステータスの更新をいただけると幸いです」程度のコメントを追加する。敵対的な態度はtriagerの印象を悪くする。プラットフォームへのエスカレーションはSLAの2倍を超えてから。"
+        },
+        {
+            question: "huntrでターゲット候補: GitHub stars 50K、最終コミット2日前、既存のGHSAが3件（すべて直近1ヶ月以内）。良いターゲットか？",
+            options: [
+                "最高のターゲット - 人気が高くメンテも活発で修正も早い",
+                "良いターゲット - 最近のadvisoryはincomplete fix variantの宝庫",
+                "混合評価 - 高visibility=競争激しいが、最近のadvisory集中は他ハンターも注目中の証。より競争が少ないsibling/forkリポの調査を検討",
+                "悪いターゲット - 既に複数のハンターが監視しておりdupリスクが高すぎる"
+            ],
+            answer: 2,
+            explanation: "50K starsのリポに1ヶ月で3件のadvisory = そのリポは現在「ホット」で複数のハンターが集中調査中。新規発見のdupリスクは高い。一方で直近advisoryのincomplete fix variantは有効な戦略だが競争も激しい。代替戦略: 同じ組織の人気度が低い関連リポ、同じフレームワークを使う別プロジェクト（横展開）、依存ライブラリ等を検討する方がduplication riskとバランスが取れる。"
+        }
+    ]);
+    </script>
+</body>
+</html>

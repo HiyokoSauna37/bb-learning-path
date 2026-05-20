@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Report Writing Mastery - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .example-good { border-left:3px solid var(--green); padding-left:1rem; margin:1rem 0; }
+        .example-bad { border-left:3px solid var(--red); padding-left:1rem; margin:1rem 0; }
+        .format-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.2rem; margin-bottom:1rem; }
+        .format-card h4 { color:var(--accent); margin-bottom:0.5rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 5: Operations &gt; Report Writing Mastery
+        </div>
+
+        <div class="page-header">
+            <h1>Report Writing Mastery</h1>
+            <p class="subtitle">
+                再現性のある、事実に基づいた報告書の書き方。
+                Platform ごとのフォーマット差異を理解し、Triage 担当者に一発で伝わるレポートを書く。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+            </div>
+        </div>
+
+        <!-- Report Structure -->
+        <div class="section">
+            <h2>レポートの基本構造</h2>
+            <p>どの platform でも共通するレポートの骨格。Triage 担当者は1日に数十件のレポートを読む。最初の3行で伝わらなければ後回しにされる。</p>
+
+            <h3>Standard Structure</h3>
+            <ol>
+                <li><strong>Title</strong> &mdash; 脆弱性の種類 + 影響箇所を1行で（例: <code>IDOR in /api/users/{id}/settings allows reading other users' email</code>）</li>
+                <li><strong>Summary</strong> &mdash; 3行以内で What / Where / Impact を説明</li>
+                <li><strong>Impact</strong> &mdash; 実際に何ができるか。理論ではなく実証されたダメージ</li>
+                <li><strong>Steps to Reproduce</strong> &mdash; 番号付きの手順。環境情報を含む</li>
+                <li><strong>PoC</strong> &mdash; 最小限の再現コード/スクリーンショット/動画</li>
+                <li><strong>Fix Recommendation</strong> &mdash; 修正案（任意だが好印象）</li>
+            </ol>
+
+            <h3>Title の書き方</h3>
+            <p>フォーマット: <code>[Vuln Type] in [Component/Endpoint] allows [Actor] to [Action]</code></p>
+            <div class="example-good">
+                <strong>Good:</strong> <code>Stored XSS in /api/comments via markdown image alt text allows session hijacking</code>
+            </div>
+            <div class="example-bad">
+                <strong>Bad:</strong> <code>XSS vulnerability found</code>（どこで何が起きるか不明）
+            </div>
+        </div>
+
+        <!-- Platform Formats -->
+        <div class="section">
+            <h2>Platform 別フォーマット</h2>
+
+            <div class="format-card">
+                <h4>HackerOne</h4>
+                <p>Markdown 形式。Weakness (CWE) を選択、Asset を指定。Severity は自己申告 + CVSS calculator。Impact section を重視する文化。</p>
+                <pre><code>## Summary
+[1-2 sentences]
+
+## Steps to Reproduce
+1. Navigate to ...
+2. Intercept request with ...
+3. Modify parameter X to ...
+
+## Impact
+An attacker can ... resulting in ...
+
+## Supporting Material
+- [screenshot1.png]
+- [poc.py]</code></pre>
+            </div>
+
+            <div class="format-card">
+                <h4>Intigriti</h4>
+                <p>フォーム入力 + Markdown body。AI使用の開示が必須（CoC 2026-03 更新）。Submission limits あり。</p>
+                <pre><code>## Description
+[What + Where + How]
+
+## Proof of Concept
+[Steps + Evidence]
+
+## Impact
+[Concrete damage]
+
+## AI Disclosure
+This report was prepared with assistance from [tool name].
+AI was used for: [specific tasks, e.g., code analysis, PoC validation]</code></pre>
+            </div>
+
+            <div class="format-card">
+                <h4>huntr (OSS)</h4>
+                <p><strong>重要: 1ファイルで完結。</strong>Description + Impact + Occurrences を split しない。<code>/bounties/disclose</code> のフォームに直接 paste する。</p>
+                <pre><code>## Description
+[Vulnerability explanation + root cause in code]
+
+## Impact
+[What an attacker can achieve]
+
+## Occurrences
+- https://github.com/org/repo/blob/main/src/file.py#L42-L55
+- https://github.com/org/repo/blob/main/src/other.py#L100</code></pre>
+            </div>
+
+            <div class="format-card">
+                <h4>GHSA (GitHub Security Advisory)</h4>
+                <p>Private vulnerability reporting。Bounty はないが portfolio 構築に有効。CVE 自動採番可能。</p>
+                <pre><code>## Summary
+[Brief description]
+
+## Details
+[Technical root cause analysis with code references]
+
+## PoC
+[Minimal reproduction steps]
+
+## Impact
+[CIA impact + affected versions]</code></pre>
+            </div>
+        </div>
+
+        <!-- Good vs Bad -->
+        <div class="section">
+            <h2>Good vs Bad Report</h2>
+
+            <h3>Clarity（明確さ）</h3>
+            <div class="example-good">
+                <strong>Good:</strong> "The endpoint <code>GET /api/v2/users/:id</code> does not verify that the authenticated user owns the resource. By changing the <code>id</code> parameter from 123 (own) to 456 (victim), the full profile including email and phone is returned."
+            </div>
+            <div class="example-bad">
+                <strong>Bad:</strong> "I found that the API might be leaking user data. It seems like authorization is not properly implemented."
+            </div>
+
+            <h3>Reproducibility（再現性）</h3>
+            <div class="example-good">
+                <strong>Good:</strong> curl コマンド、HTTP request/response の完全なログ、環境情報 (OS, version, config)
+            </div>
+            <div class="example-bad">
+                <strong>Bad:</strong> "I tested this in my browser and it worked"（再現不能）
+            </div>
+
+            <h3>No Speculation（推測禁止）</h3>
+            <div class="example-good">
+                <strong>Good:</strong> "I verified that User B's email <code>b@example.com</code> is returned in the response body (see screenshot)."
+            </div>
+            <div class="example-bad">
+                <strong>Bad:</strong> "This could potentially lead to account takeover if combined with other vulnerabilities."（実証なし）
+            </div>
+        </div>
+
+        <!-- Impact Demonstration -->
+        <div class="section">
+            <h2>Impact の示し方</h2>
+            <p>Impact は「理論上可能」ではなく「実際にやってみせた」で示す。</p>
+
+            <h3>原則</h3>
+            <ul>
+                <li><strong>Show, don't tell</strong> &mdash; "could allow" ではなく "I was able to"</li>
+                <li><strong>Actual damage</strong> &mdash; 実際に取得したデータ、変更できた設定を見せる</li>
+                <li><strong>Worst-case は実証した範囲内で</strong> &mdash; 実証していない escalation path は "potential" と明記</li>
+                <li><strong>他ユーザへの実害なし</strong> &mdash; 自分の test account 間でのみ実証</li>
+            </ul>
+
+            <h3>PoC ガイドライン</h3>
+            <ul>
+                <li>最小限のコードで再現可能にする（依存ライブラリを減らす）</li>
+                <li>Safe: 他ユーザのデータを実際に読み取らない（自分のテストアカウント同士で）</li>
+                <li>Reproducible: 環境依存を明記（OS, Python version, 必要な config）</li>
+                <li>Cleanup: PoC 実行後の後片付け手順も含める</li>
+            </ul>
+        </div>
+
+        <!-- Language -->
+        <div class="section">
+            <h2>言語・文体</h2>
+            <ul>
+                <li>レポートは<strong>英語</strong>で書く（日本語 platform 以外）</li>
+                <li>簡潔・事実的 (concise & factual)。文学的表現は不要</li>
+                <li>受動態より能動態: "The server returns..." not "It was observed that..."</li>
+                <li>1文1事実。複合文を避ける</li>
+                <li>Technical term は正確に（XSS, SSRF, IDOR 等を正しく使い分ける）</li>
+            </ul>
+        </div>
+
+        <!-- Checklist -->
+        <div class="section">
+            <h2>Submit 前チェックリスト</h2>
+            <ul>
+                <li>Title は vuln type + location + impact を含むか</li>
+                <li>Steps to Reproduce は初見の人が再現できるか</li>
+                <li>PoC は minimal & safe か</li>
+                <li>Impact は実証済みか（推測で severity を盛っていないか）</li>
+                <li>Scope 内のアセットか</li>
+                <li>huntr の場合: 1ファイルに収まっているか</li>
+                <li>Intigriti の場合: AI disclosure が含まれるか</li>
+            </ul>
+        </div>
+
+        <!-- Navigation -->
+        <div class="section" style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border); padding-top:1.5rem;">
+            <a href="48-mcp-llm-attacks.html">&larr; Prev: MCP & LLM Attacks</a>
+            <button class="complete-btn" data-module-id="50-report" onclick="toggleComplete('50-report')">Mark Complete</button>
+            <a href="51-severity-cvss.html">Next: Severity & CVSS &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

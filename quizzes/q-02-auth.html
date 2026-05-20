@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authentication Mechanisms - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; Authentication Mechanisms
+        </div>
+        <div class="page-header">
+            <h1>Authentication Mechanisms</h1>
+            <p class="subtitle">5 questions - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../modules/02-authentication.html">&larr; Module に戻る</a>
+            <a href="../quiz.html">Quiz 一覧 &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-02-auth', [
+        {
+            question: "JWT(JSON Web Token)でalg:none攻撃が成功した場合、何が起こるか？",
+            options: [
+                "トークンが暗号化されなくなり、ペイロードが読み取り可能になる",
+                "署名検証がスキップされ、攻撃者がペイロードを改ざんしたトークンが受け入れられる",
+                "トークンの有効期限が無視され、期限切れトークンが使える",
+                "サーバーがトークンを拒否してセッションがリセットされる"
+            ],
+            answer: 1,
+            explanation: "alg:none攻撃はヘッダーのアルゴリズムを'none'に変更することで、サーバーに署名検証をスキップさせる。これにより攻撃者はペイロード（ユーザーID、権限等）を自由に改ざんできる。なおJWTのペイロードはBase64エンコードに過ぎず、暗号化されていないため元々読み取り可能（JWEを除く）。"
+        },
+        {
+            question: "セッションベース認証とJWT認証の根本的な違いとして最も正確なのはどれか？",
+            options: [
+                "セッションはCookieを使い、JWTはヘッダーを使う",
+                "セッションはサーバー側で状態を保持し、JWTはトークン自体に状態を含む（ステートレス）",
+                "セッションはHTTPSが必須だが、JWTはHTTPでも安全",
+                "JWTはセッションより常にセキュリティが高い"
+            ],
+            answer: 1,
+            explanation: "根本的な違いはステートフルvsステートレス。セッションはサーバー側にデータを保持し、クライアントにはIDのみ渡す。JWTはトークン自体にデータを含むため、サーバー側の状態管理が不要。Cookie/Headerは伝送手段に過ぎず本質的な違いではない。JWTもCookieで送れるし、セッションIDもヘッダーで送れる。"
+        },
+        {
+            question: "OAuth 2.0のAuthorization Code Flowにおいて、認可コード(authorization code)は何と交換されるか？",
+            options: [
+                "ユーザーのパスワードと交換される",
+                "アクセストークン（とオプションでリフレッシュトークン）と交換される",
+                "クライアントシークレットと交換される",
+                "ユーザーのプロフィール情報と直接交換される"
+            ],
+            answer: 1,
+            explanation: "Authorization Code Flowでは：1)ユーザーが認可サーバーでログイン→2)認可コードがリダイレクトURLに渡される→3)バックエンドが認可コード+クライアントシークレットをトークンエンドポイントに送信→4)アクセストークン(+リフレッシュトークン)を取得。認可コードは短命で一度限り有効の中間クレデンシャル。"
+        },
+        {
+            question: "PKCE (Proof Key for Code Exchange) が存在する主な理由は何か？",
+            options: [
+                "トークンのペイロードを暗号化してプライバシーを保護するため",
+                "モバイルアプリ等のパブリッククライアントにおける認可コードの傍受攻撃を防ぐため",
+                "リフレッシュトークンの有効期限を延長するため",
+                "OAuthプロバイダー間の互換性を確保するため"
+            ],
+            answer: 1,
+            explanation: "PKCEはモバイルアプリやSPA等、クライアントシークレットを安全に保管できない環境（パブリッククライアント）で認可コード傍受を防ぐ。カスタムURLスキーム等で認可コードが悪意あるアプリに横取りされても、code_verifierを知らないためトークンに交換できない。動的なチャレンジ/ベリファイアペアで認可リクエストとトークンリクエストを紐付ける。"
+        },
+        {
+            question: "パスワードリセットトークンが「脆弱」と判断される根本的な理由として最も重要なのはどれか？",
+            options: [
+                "トークンがURLに含まれてRefererヘッダーで漏洩する可能性がある",
+                "トークンが予測可能な方法で生成されている（短い長さ、タイムスタンプベース、シーケンシャル等）",
+                "トークンの有効期限が24時間以上に設定されている",
+                "トークンが使用後に無効化されない"
+            ],
+            answer: 1,
+            explanation: "トークンの脆弱性の根本は予測可能性。短い長さ（ブルートフォース可能）、タイムスタンプベース（時間推測可能）、シーケンシャル（次の値を推測可能）、Math.random等の非暗号的PRNG使用はすべて予測可能性に起因する。Referer漏洩や有効期限は追加のリスク要因だが、CSPRNGで十分な長さのトークンが使われていればそれだけでは致命的にならない。"
+        }
+    ]);
+    </script>
+</body>
+</html>

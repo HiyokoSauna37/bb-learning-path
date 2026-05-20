@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Race Conditions & TOCTOU - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .timing-diagram { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; margin: 1rem 0; font-family: 'Cascadia Code', monospace; font-size: 0.8rem; line-height: 1.8; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 4: Advanced &gt; Race Conditions &amp; TOCTOU
+        </div>
+
+        <div class="page-header">
+            <h1>Race Conditions & TOCTOU</h1>
+            <p class="subtitle">
+                並行処理のタイミング差を悪用し、ビジネスロジックのチェックをbypassする攻撃。
+                Valve CD key duplicationで$20,000、limit bypassが頻出ターゲット。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-wsa">WSA Labs</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Core Concept</h2>
+            <p>
+                Race conditionは、2つ以上のリクエストが同時に処理される際、
+                チェック(Time-of-Check)と操作(Time-of-Use)の間にwindowが生じ、
+                本来許可されない操作が成功する脆弱性。
+            </p>
+
+            <div class="timing-diagram">
+Thread A:  [CHECK balance >= $100] -------- [DEDUCT $100] → Success
+Thread B:  -------- [CHECK balance >= $100] -------- [DEDUCT $100] → Success
+                         ↑ both see $100 before either deducts
+Result: $100 balance → $200 spent (double-spend)
+            </div>
+
+            <h3>なぜ今 Race Condition が重要か</h3>
+            <ul>
+                <li><strong>HTTP/2の普及</strong>: Single-packet attackが容易に (true simultaneity)</li>
+                <li><strong>マイクロサービス化</strong>: サービス間のatomicity保証が困難</li>
+                <li><strong>報酬額が高い</strong>: ビジネスインパクト直結 (金銭的損害)</li>
+                <li><strong>自動テストで見つかりにくい</strong>: CI/CDのunit testでは再現困難</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Single-Packet Attack (HTTP/2)</h2>
+            <p>
+                HTTP/2ではmultiple streamsが単一TCP接続上で多重化される。
+                複数リクエストを<strong>1つのTCPパケット</strong>に詰めて送信することで、
+                ネットワークjitterを完全排除し、サーバ側でtrue simultaneous processingを強制できる。
+            </p>
+
+            <h3>HTTP/1.1 vs HTTP/2 の違い</h3>
+            <table>
+                <thead>
+                    <tr><th>Aspect</th><th>HTTP/1.1 (Last-byte sync)</th><th>HTTP/2 (Single-packet)</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>同時性</td><td>数ms〜数十msのばらつき</td><td>Sub-microsecond precision</td></tr>
+                    <tr><td>必要接続数</td><td>リクエスト数分</td><td>1本</td></tr>
+                    <tr><td>Network jitter影響</td><td>大きい</td><td>ゼロ</td></tr>
+                    <tr><td>成功率</td><td>試行回数が必要</td><td>ほぼ確実</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Turbo Intruder (Single-packet mode)</h3>
+            <pre><code>def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                           concurrentConnections=1,
+                           engine=Engine.HTTP2)
+
+    # Queue all requests
+    for i in range(20):
+        engine.queue(target.req, gate='race1')
+
+    # Release all at once (single packet)
+    engine.openGate('race1')
+
+def handleResponse(req, interesting):
+    table.add(req)</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Attack Patterns</h2>
+
+            <h3>1. Limit Bypass (Coupon / Credit)</h3>
+            <p>クーポン適用やポイント利用で「残り1回」のチェックをrace conditionでbypass:</p>
+            <pre><code>// 正常フロー
+POST /api/redeem-coupon  (coupon: SAVE50)
+→ Check: coupon.uses_remaining > 0  ✓
+→ Apply discount
+→ Decrement: coupon.uses_remaining -= 1
+
+// Race: 20リクエスト同時送信
+// 全リクエストが uses_remaining=1 を見る → 全て成功</code></pre>
+
+            <div class="callout success">
+                <div class="callout-title">Real: Valve CD Key Duplication ($20,000)</div>
+                <p>Steam CD keyの有効化を同時に複数アカウントから実行。
+                1つのkeyが複数アカウントに適用されるduplicate状態を達成。</p>
+            </div>
+
+            <h3>2. Balance Double-Spend</h3>
+            <pre><code>// Account balance: $500
+// 同時に2つの$500送金リクエスト
+POST /api/transfer { amount: 500, to: attacker1 }
+POST /api/transfer { amount: 500, to: attacker2 }
+// Both check balance >= 500: TRUE → Both succeed
+// Result: $1000 transferred from $500 balance</code></pre>
+
+            <h3>3. State Machine Abuse</h3>
+            <p>多段階プロセス（メール認証 → SMS認証 → アカウント作成）のステップをskip:</p>
+            <div class="timing-diagram">
+Normal: Step1(email verify) → Step2(sms verify) → Step3(create account)
+
+Attack: Send Step3 request WHILE Step1 is being processed
+        Server sets state="email_verified" → Step3 checks state → passes
+        (SMS verification never happened)
+            </div>
+
+            <h3>4. File Upload Race</h3>
+            <pre><code>// Upload → Validate → Delete if invalid
+// Race window: between upload and validation
+
+Thread A: Upload malicious.php → saved to /tmp/uploads/abc123.php
+Thread B: GET /tmp/uploads/abc123.php → 200 OK (executed!)
+          ↑ access BEFORE validation/deletion runs</code></pre>
+
+            <h3>5. TOCTOU in Access Control</h3>
+            <pre><code>// Permission check race
+Thread A: Check user.role == "admin" → FALSE → but thread suspended
+Thread B: UPDATE user SET role = "admin" (via another vuln)
+Thread A: resumes → performs admin action with old check result
+
+// Or the reverse:
+Thread A: Check file permissions → OK
+Thread B: Replace file with symlink to /etc/shadow
+Thread A: Read file → reads /etc/shadow</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Detection & Testing Methodology</h2>
+
+            <h3>識別パターン</h3>
+            <ul>
+                <li><strong>数量制限のあるリソース</strong>: クーポン、バウチャー、招待コード、ポイント</li>
+                <li><strong>一度きりのアクション</strong>: パスワードリセット、メール変更、2FA登録</li>
+                <li><strong>残高操作</strong>: 送金、購入、出金</li>
+                <li><strong>多段階フロー</strong>: 認証プロセス、KYC、承認ワークフロー</li>
+                <li><strong>ファイル操作</strong>: アップロード後の処理、一時ファイル</li>
+            </ul>
+
+            <h3>テスト手順</h3>
+            <ol>
+                <li>対象endpoint特定 (limit/balance/state変更系)</li>
+                <li>正常フローを1回実行し、レスポンスを確認</li>
+                <li>同一リクエストを20-50本同時送信 (HTTP/2 single-packet)</li>
+                <li>成功レスポンス数をカウント (1以上なら脆弱)</li>
+                <li>実際のデータ変化を確認 (本当にdouble-spendしたか)</li>
+            </ol>
+
+            <div class="callout warning">
+                <div class="callout-title">Testing Ethics</div>
+                <p>
+                    本番環境でのrace conditionテストは実データに影響を与える可能性がある。
+                    テスト用アカウント間での操作に限定し、
+                    成功したら即座にrevertして報告すること。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Tools</h2>
+            <table>
+                <thead>
+                    <tr><th>Tool</th><th>特徴</th><th>用途</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Turbo Intruder</td><td>Burp extension, HTTP/2 single-packet対応</td><td>Primary testing tool</td></tr>
+                    <tr><td>Custom HTTP/2 scripts (Python h2)</td><td>完全制御可能</td><td>複雑なシナリオ</td></tr>
+                    <tr><td>Burp Repeater (group send)</td><td>並列送信 (HTTP/2)</td><td>Quick test</td></tr>
+                    <tr><td>race-the-web</td><td>Go製、CLI tool</td><td>CI組み込み</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Python h2 Library Example</h3>
+            <pre><code>import h2.connection
+import h2.config
+import socket, ssl
+
+# Single TCP connection, multiple streams
+conn = h2.connection.H2Connection()
+conn.initiate_connection()
+
+# Queue multiple requests on different streams
+for stream_id in range(1, 41, 2):  # 20 requests
+    conn.send_headers(stream_id, headers)
+    conn.send_data(stream_id, body, end_stream=True)
+
+# Send ALL frames in one socket.send() call
+sock.sendall(conn.data_to_send())  # Single packet!</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>WSA Labs</h2>
+            <div class="card">
+                <div class="card-title">PortSwigger Web Security Academy</div>
+                <ul>
+                    <li><a href="https://portswigger.net/web-security/race-conditions" target="_blank">Race conditions</a> - Limit overrun, multi-endpoint races</li>
+                    <li>Lab: Limit overrun race conditions</li>
+                    <li>Lab: Bypassing rate limits via race conditions</li>
+                    <li>Lab: Multi-endpoint race conditions</li>
+                    <li>Lab: Single-endpoint race conditions</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Defense Mechanisms (攻撃者として知っておくべき)</h2>
+            <ul>
+                <li><strong>Database-level locking</strong>: SELECT FOR UPDATE, advisory locks</li>
+                <li><strong>Idempotency keys</strong>: 重複リクエスト検知</li>
+                <li><strong>Optimistic locking</strong>: version番号チェック</li>
+                <li><strong>Rate limiting per-operation</strong>: 同一操作の連続実行制限</li>
+                <li><strong>Atomic operations</strong>: Redis DECRBY等でcheck+useを一体化</li>
+            </ul>
+            <p>これらが実装されていない箇所がrace conditionの攻撃対象。</p>
+        </div>
+
+        <div class="page-nav">
+            <a href="40-exploit-chains.html">&larr; Prev: Exploit Chains</a>
+            <a href="42-oauth-attacks.html">Next: OAuth Attacks &rarr;</a>
+        </div>
+
+        <div style="margin-top:2rem; text-align:center;">
+            <button class="complete-btn" data-module-id="41-race" onclick="toggleComplete('41-race')">Mark Complete</button>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

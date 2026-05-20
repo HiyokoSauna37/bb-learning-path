@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tax & Legal - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .tax-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.2rem; margin-bottom:1rem; }
+        .tax-card h4 { color:var(--accent); margin-bottom:0.5rem; }
+        .legal-warning { background:var(--red-dim); border:1px solid var(--red); border-radius:8px; padding:1rem; margin:1rem 0; }
+        .legal-safe { background:var(--green-dim); border:1px solid var(--green); border-radius:8px; padding:1rem; margin:1rem 0; }
+        .expense-list { columns:2; column-gap:2rem; }
+        .expense-list li { break-inside:avoid; margin-bottom:0.3rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 5: Operations &gt; Tax &amp; Legal
+        </div>
+
+        <div class="page-header">
+            <h1>Tax &amp; Legal</h1>
+            <p class="subtitle">
+                BB を副業として継続するための税務・法務知識。
+                20万円ルール、W-8BEN、不正アクセス禁止法との境界。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+            </div>
+        </div>
+
+        <!-- Japanese Tax -->
+        <div class="section">
+            <h2>日本の税務ルール</h2>
+
+            <div class="tax-card">
+                <h4>20万円ルール</h4>
+                <ul>
+                    <li>給与所得者で、給与以外の所得（BB bounty 等）が<strong>年間20万円以下</strong>なら確定申告不要</li>
+                    <li>「所得」= 収入 - 経費。経費を差し引いた後の金額で判定</li>
+                    <li>20万円を超えた場合は確定申告が必要</li>
+                    <li><strong>注意:</strong> 20万円以下でも住民税の申告は必要（後述）</li>
+                    <li>年末調整の対象外（会社の年末調整ではカバーされない）</li>
+                </ul>
+            </div>
+
+            <div class="tax-card">
+                <h4>住民税: 普通徴収を選択</h4>
+                <ul>
+                    <li>確定申告時に住民税の徴収方法を「普通徴収（自分で納付）」にする</li>
+                    <li>これにより副業収入分の住民税が会社の給与天引きに含まれない</li>
+                    <li>= 会社に副業がバレにくい</li>
+                    <li>20万円以下で確定申告不要でも、市区町村に住民税の申告は別途必要</li>
+                </ul>
+            </div>
+
+            <div class="tax-card">
+                <h4>所得区分</h4>
+                <ul>
+                    <li>BB 報酬は「雑所得」に分類（事業所得にするには開業届が必要）</li>
+                    <li>雑所得 = 収入金額 - 必要経費</li>
+                    <li>為替レート: 受取日の TTB レート（外貨建ての場合）</li>
+                    <li>HackerOne は USD 建て → PayPal/銀行送金時のレートで計算</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- W-8BEN -->
+        <div class="section">
+            <h2>W-8BEN (米国源泉徴収)</h2>
+
+            <div class="tax-card">
+                <h4>概要</h4>
+                <ul>
+                    <li>US platform (HackerOne, Bugcrowd) から bounty を受け取る場合に必要</li>
+                    <li>W-8BEN = 「非居住外国人」の申告書。日米租税条約の適用を受けるため</li>
+                    <li>未提出の場合: 30% の源泉徴収が適用される</li>
+                    <li>提出済みの場合: 日米租税条約により 0% (royalties/services の場合)</li>
+                </ul>
+            </div>
+
+            <div class="tax-card">
+                <h4>手続き</h4>
+                <ol>
+                    <li>HackerOne / Bugcrowd の Tax Settings で W-8BEN フォームに記入</li>
+                    <li>マイナンバー (Individual TIN) を記入</li>
+                    <li>Treaty country: Japan, Article: 7 (Business Profits) or 22 (Other Income)</li>
+                    <li>有効期限: 3年。期限切れ前に更新が必要</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- SoftBank -->
+        <div class="section">
+            <h2>会社の副業規定</h2>
+            <div class="tax-card">
+                <h4>SoftBank 副業規定 (確認事項)</h4>
+                <ul>
+                    <li>SoftBank は副業を原則許可している（事前届出制）</li>
+                    <li>BB は「セキュリティリサーチ」として届出可能か確認</li>
+                    <li>競業避止: SOC 業務と直接競合しないことを確認</li>
+                    <li>時間管理: 本業に支障がないことが条件</li>
+                    <li>機密情報: 会社の業務情報を BB に利用しないこと</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Expense -->
+        <div class="section">
+            <h2>経費として計上可能なもの</h2>
+            <p>BB 活動に直接必要な支出は経費として収入から差し引ける:</p>
+            <ul class="expense-list">
+                <li>Burp Suite Pro ライセンス</li>
+                <li>VPS / クラウドサーバ代</li>
+                <li>ドメイン取得費</li>
+                <li>セキュリティ関連書籍</li>
+                <li>Training course / Certification</li>
+                <li>ハードウェア（テスト用デバイス）</li>
+                <li>インターネット回線費 (按分)</li>
+                <li>電気代 (按分)</li>
+                <li>カンファレンス参加費</li>
+                <li>交通費 (カンファレンス)</li>
+            </ul>
+            <p><strong>注意:</strong> 按分 = BB に使用した割合のみ。100% 計上は税務調査で否認される。領収書・利用記録を保管。</p>
+        </div>
+
+        <!-- Legal -->
+        <div class="section">
+            <h2>法的考慮事項</h2>
+
+            <div class="legal-warning">
+                <h4>不正アクセス禁止法との境界</h4>
+                <ul>
+                    <li>日本法上、不正アクセス禁止法（平成11年法律第128号）は「正当な理由なく」アクセス制御を突破する行為を禁止</li>
+                    <li>BB program の scope 内テストは「正当な理由あり」と解釈されうるが、<strong>判例が少ない</strong></li>
+                    <li>Scope 外のアセットへのテストは絶対に行わない</li>
+                    <li>日本企業の program は特に慎重に scope を確認</li>
+                </ul>
+            </div>
+
+            <div class="legal-safe">
+                <h4>安全に活動するための原則</h4>
+                <ul>
+                    <li><strong>Scope 厳守:</strong> Program が明示的に許可したアセットのみテスト</li>
+                    <li><strong>Safe Harbor:</strong> Program の Safe Harbor 条項を確認。記載がない program は慎重に</li>
+                    <li><strong>他ユーザへの実害なし:</strong> テストは自分のアカウント間でのみ。他者のデータに触れない</li>
+                    <li><strong>DoS 禁止:</strong> Rate limit テストやブルートフォースは明示的に許可されていない限り避ける</li>
+                    <li><strong>記録保持:</strong> テスト内容のログを残す（万が一の場合に正当性を証明）</li>
+                    <li><strong>Responsible Disclosure:</strong> Program のルールに従う。勝手に公開しない</li>
+                </ul>
+            </div>
+
+            <h3>Responsible Disclosure のルール</h3>
+            <ul>
+                <li>Platform のルールに従う（disclosure timeline は program が決める）</li>
+                <li>Vendor に十分な修正期間を与える（通常 90日が業界標準）</li>
+                <li>修正前に公開しない（0-day disclosure は法的リスクが高い）</li>
+                <li>Program が disclosure を許可した場合のみ公開する</li>
+            </ul>
+        </div>
+
+        <!-- Record Keeping -->
+        <div class="section">
+            <h2>記録管理</h2>
+            <ul>
+                <li><strong>収入記録:</strong> Platform 別の bounty 受取日、金額 (USD + JPY換算)、レート</li>
+                <li><strong>経費記録:</strong> 日付、金額、用途、領収書の保管</li>
+                <li><strong>Submission log:</strong> 提出日、program、result、bounty 金額 (mei-bb の <code>_submission_log.md</code>)</li>
+                <li><strong>年間集計:</strong> 12月末に年間収支を確定。20万円超なら確定申告準備</li>
+                <li><strong>保管期間:</strong> 5年間（税務調査に備えて）</li>
+            </ul>
+        </div>
+
+        <!-- Annual Timeline -->
+        <div class="section">
+            <h2>年間スケジュール</h2>
+            <table>
+                <thead><tr><th>時期</th><th>タスク</th><th>備考</th></tr></thead>
+                <tbody>
+                    <tr><td>毎月</td><td>収入・経費の記録</td><td>Excel or 会計ソフトで管理</td></tr>
+                    <tr><td>12月</td><td>年間集計・20万円判定</td><td>超過なら確定申告準備開始</td></tr>
+                    <tr><td>1月</td><td>支払調書の確認</td><td>HackerOne から 1099 相当の通知</td></tr>
+                    <tr><td>2月16日-3月15日</td><td>確定申告</td><td>e-Tax or 税務署窓口</td></tr>
+                    <tr><td>3月</td><td>住民税申告 (20万以下の場合)</td><td>市区町村窓口</td></tr>
+                    <tr><td>6月</td><td>住民税通知確認</td><td>普通徴収になっているか確認</td></tr>
+                    <tr><td>W-8BEN 期限月</td><td>W-8BEN 更新</td><td>3年ごと</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Navigation -->
+        <div class="section" style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border); padding-top:1.5rem;">
+            <a href="55-signal-reputation.html">&larr; Prev: Signal &amp; Reputation</a>
+            <button class="complete-btn" data-module-id="56-tax" onclick="toggleComplete('56-tax')">Mark Complete</button>
+            <a href="57-lessons-learned.html">Next: Lessons Learned &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

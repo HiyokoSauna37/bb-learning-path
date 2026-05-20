@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Incomplete Fix Variants - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; Incomplete Fix Variants
+        </div>
+        <div class="page-header">
+            <h1>Incomplete Fix Variants</h1>
+            <p class="subtitle">5 questions - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../modules/25-incomplete-fix.html">&larr; Module に戻る</a>
+            <a href="../quiz.html">Quiz 一覧 &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-25-incfix', [
+        {
+            question: "「Incomplete fix variant（不完全修正バリアント）」とは何を意味するか？",
+            options: [
+                "修正パッチ自体にバグがあり、同じ箇所で別の脆弱性が発生すること",
+                "パッチが特定のインスタンスは修正したが、同じパターンの他の箇所（兄弟）を見落としていること",
+                "修正が不十分で、同じ入力で同じ脆弱性が再現できること（リグレッション）",
+                "修正により新しい機能が壊れること（互換性の問題）"
+            ],
+            answer: 1,
+            explanation: "Incomplete fix variantは「パッチは正しく適用されたが、同じ脆弱性パターンが他の場所に残っている」状態。例：SQLiの修正でqueryA()にパラメータ化を適用したが、queryB()やqueryC()は未修正。同じ開発者が同じ習慣で書いたコードに同パターンが散在していることが多い。リグレッション（同じ箇所の再発）とは区別される。"
+        },
+        {
+            question: "Incomplete fix variantの報告において、報告タイミングとして最も推奨されるのはどれか？",
+            options: [
+                "パッチのリリース直後（即日）",
+                "アドバイザリ公開から3日以内",
+                "パッチ適用後1ヶ月程度（十分な検証期間を経て）",
+                "次のメジャーバージョンリリース時"
+            ],
+            answer: 1,
+            explanation: "アドバイザリ公開から3日以内が最適。理由：1)他の研究者もvariantを探しているためdup(重複)リスクが日々増大、2)ベンダーの注意がまだその脆弱性クラスに向いているため対応が早い、3)30日超ではdup率が極めて高く、費やす時間に対するリターンが低い。ただし即日は競合が激しい場合もある。"
+        },
+        {
+            question: "パッチの差分を読んだ後、兄弟（sibling）バグを見つけるための最も効果的な手法はどれか？",
+            options: [
+                "パッチで追加された新しいコード行に脆弱性がないか確認する",
+                "パッチで追加された修正チェック/関数名でコードベース全体をgrepし、そのチェックが適用されていない場所を見つける",
+                "パッチを元に戻して脆弱性を再現し、他のエントリポイントでも同じか試す",
+                "パッチのコミットメッセージに記載された他のIssue番号を追跡する"
+            ],
+            answer: 1,
+            explanation: "最も効率的なのは「修正で追加されたもの」で検索して「それがない場所」を見つけること。例：パッチがisAuthenticated()チェックを追加→コードベース全体でルート定義をリストアップ→isAuthenticated()のないルートが兄弟バグ候補。パッチが「何を追加したか」を理解すれば、「何が欠けているか」を逆方向に検索できる。"
+        },
+        {
+            question: "アドバイザリ公開から30日以上経過した脆弱性のvariant報告がNOGO（非推奨）とされる理由は何か？",
+            options: [
+                "30日以上経過した脆弱性はベンダーが修正を拒否する可能性が高いため",
+                "高いdup（重複報告）リスク：他の研究者が既にvariantを報告している可能性が非常に高い",
+                "30日経過でCVE番号が割り当て済みとなりvariantは受け付けられないため",
+                "30日以上前の脆弱性は低リスクと判断され報奨金が支払われないため"
+            ],
+            answer: 1,
+            explanation: "30日以上ではdup率が極めて高い。セキュリティ研究者コミュニティではアドバイザリ公開直後にvariant huntingが集中するため、時間が経つほど「既に他の誰かが報告済み」の可能性が高まる。dupは報酬なし+時間の浪費となるため、投資対効果の観点からNOGO判定。例外は3日以内のみGO（十分ユニークな可能性がある）。"
+        },
+        {
+            question: "Incomplete fix variantの報告書に「ネガティブテスト」を含めることが重要な理由は何か？",
+            options: [
+                "テスターとしての技術力を示すため",
+                "修正が適用された箇所では攻撃が失敗することを示し、未修正箇所のみが脆弱であることを証明するため",
+                "WAFやセキュリティ製品がペイロードを検知しないことを証明するため",
+                "本番環境で安全にテストを実行できることを示すため"
+            ],
+            answer: 1,
+            explanation: "ネガティブテスト（修正済み箇所でペイロードが失敗するデモ）は、variant報告の説得力を大幅に高める。これにより：1)パッチが「一部に」正しく適用されていることを証明、2)同時に他の箇所には未適用であることの対比が明確になる、3)ベンダーが「パッチは全体に適用されているはず」と却下する余地を潰す。Before/After比較の構造で示す。"
+        }
+    ]);
+    </script>
+</body>
+</html>

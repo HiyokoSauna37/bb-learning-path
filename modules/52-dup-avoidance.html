@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Duplicate Avoidance Strategy - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .axis-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.2rem; margin-bottom:1rem; }
+        .axis-card h4 { color:var(--accent); margin-bottom:0.5rem; }
+        .timeline { border-left:3px solid var(--accent); padding-left:1.5rem; margin:1.5rem 0; }
+        .timeline-item { margin-bottom:1.2rem; position:relative; }
+        .timeline-item::before { content:''; position:absolute; left:-1.85rem; top:0.4rem; width:10px; height:10px; border-radius:50%; background:var(--accent); }
+        .dup-zone { background:var(--yellow-dim); border:1px solid var(--yellow); border-radius:8px; padding:1rem; margin:0.5rem 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 5: Operations &gt; Duplicate Avoidance Strategy
+        </div>
+
+        <div class="page-header">
+            <h1>Duplicate Avoidance Strategy</h1>
+            <p class="subtitle">
+                Dup は BB hunter の最大の敵。時間を投資した後に「既知」と返されるのを防ぐ戦略。
+                3軸チェックと timing 戦略で dup rate を下げる。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <!-- 3-Axis Check -->
+        <div class="section">
+            <h2>3-Axis Dup Check</h2>
+            <p>Submit 前に 3 つの軸で既知かどうかを確認する。1つでも hit したら submit しない。</p>
+
+            <div class="axis-card">
+                <h4>Axis 1: Advisory (GHSA / CVE / NVD)</h4>
+                <ul>
+                    <li><code>bb-ghsa list {repo}</code> で対象リポジトリの全 advisory を列挙</li>
+                    <li>CVE description とキーワードマッチ（endpoint 名, パラメータ名, vuln class）</li>
+                    <li>NVD で関連 CVE を検索</li>
+                    <li><strong>重要:</strong> WebFetch/手動 gh api では漏れが発生する（5件抜けの実害あり）。<code>bb-ghsa list</code> を canonical 経路にする</li>
+                </ul>
+            </div>
+
+            <div class="axis-card">
+                <h4>Axis 2: PR / Commit</h4>
+                <ul>
+                    <li>GitHub の commit history で fix keyword 検索: <code>fix</code>, <code>patch</code>, <code>security</code>, <code>CVE</code></li>
+                    <li>PR title/body での脆弱性修正の痕跡</li>
+                    <li><strong>Side-effect fix PR の検出:</strong> maintainer が advisory なしで修正するケースがある。diff を見て意図的な security fix か判断</li>
+                </ul>
+            </div>
+
+            <div class="axis-card">
+                <h4>Axis 3: Issue</h4>
+                <ul>
+                    <li>GitHub Issues でセキュリティ関連の報告を検索</li>
+                    <li>Close された issue にも security fix が含まれる</li>
+                    <li>HackerOne disclosed reports の検索（公開済みレポートのみ）</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Timing Strategy -->
+        <div class="section">
+            <h2>Timing 戦略</h2>
+
+            <div class="timeline">
+                <div class="timeline-item">
+                    <strong>Advisory 公開 3日以内 = Golden Window</strong>
+                    <p>Incomplete fix variant を発見できる最高のタイミング。パッチが不完全なケースが多い。即座に variant を探す。</p>
+                </div>
+                <div class="timeline-item">
+                    <strong>3日 〜 30日 = Competitive Zone</strong>
+                    <p>他の hunter も同じ advisory を見ている。Variant は既に報告されている可能性が高い。深い分析が必要。</p>
+                </div>
+                <div class="timeline-item">
+                    <strong>30日超 = NOGO (Default)</strong>
+                    <p>Incomplete-fix variant 戦略の default は deprioritize。例外は advisory 3日以内のみ GO。30日超は NOGO default (<code>bb-advisory-age</code> で判定)。</p>
+                </div>
+            </div>
+
+            <h3>例外: GO になるケース</h3>
+            <ul>
+                <li>明らかに未パッチの sibling endpoint が存在する（grep で確認可能）</li>
+                <li>パッチが helper function を追加したが、呼び出し箇所に propagate されていない</li>
+                <li>新バージョンで regression が発生している</li>
+            </ul>
+        </div>
+
+        <!-- Dup Zone Management -->
+        <div class="section">
+            <h2>Dup Zone 管理</h2>
+            <p>Program ごとに「この endpoint/パターンは dup zone」と記録し、同じ轍を踏まない。</p>
+
+            <h3>mei-bb 実例: Known Dup Zones</h3>
+
+            <div class="dup-zone">
+                <strong>GitLab</strong> &mdash; BulkImport 関連の authorization bypass。大量の prior report あり。新規 variant は非常に高い bar。
+            </div>
+            <div class="dup-zone">
+                <strong>Nitro</strong> &mdash; <code>isPathInScope</code> path traversal。パッチ済み、variant は報告済み。
+            </div>
+            <div class="dup-zone">
+                <strong>OPPO</strong> &mdash; OAuth state parameter の CSRF。既知パターン。
+            </div>
+            <div class="dup-zone">
+                <strong>Grafana</strong> &mdash; <code>registerOptions*</code> 関連。複数の prior report で dup zone 確立。
+            </div>
+        </div>
+
+        <!-- Platform Specifics -->
+        <div class="section">
+            <h2>Platform 別 Dup 挙動</h2>
+
+            <h3>HackerOne</h3>
+            <ul>
+                <li>Private report は他の hunter からは不可視 &mdash; dup かどうか submit するまでわからない</li>
+                <li>Dup 判定後に original report が disclosed されることがある → 学習機会</li>
+                <li>同一 program で連続 dup は reputation には影響しないが、time waste</li>
+            </ul>
+
+            <h3>Intigriti</h3>
+            <ul>
+                <li>Dup は triage team が判定。original reporter の report は見えない</li>
+                <li>部分的な dup（同じ root cause だが異なる endpoint）は accepted される場合がある</li>
+            </ul>
+
+            <h3>huntr (OSS)</h3>
+            <ul>
+                <li>OSS なので commit history が完全に公開 &mdash; 3-axis check が最も効果的</li>
+                <li>GHSA が private の場合もある（embargo 中）</li>
+            </ul>
+        </div>
+
+        <!-- Signal Impact -->
+        <div class="section">
+            <h2>Signal への影響</h2>
+            <table>
+                <thead><tr><th>Result</th><th>Signal Impact</th><th>備考</th></tr></thead>
+                <tbody>
+                    <tr><td>Resolved (Bounty)</td><td>Positive (+7)</td><td>理想</td></tr>
+                    <tr><td>Duplicate</td><td>Excluded (計算から除外)</td><td>Signal にプラスもマイナスも影響なし。Reputation に +2 (early) / -5 (late) の別計算あり</td></tr>
+                    <tr><td>Informative</td><td>0</td><td>Neutral</td></tr>
+                    <tr><td>N/A</td><td>-5</td><td>避けるべき</td></tr>
+                    <tr><td>Spam</td><td>-10</td><td>絶対避ける</td></tr>
+                </tbody>
+            </table>
+            <p><strong>Key insight:</strong> Dup は Signal 計算から除外される（プラスもマイナスもない）。N/A や Spam のほうが遥かにダメージが大きい。Dup を恐れて submit しないより、品質の低い報告を避けることが重要。</p>
+        </div>
+
+        <!-- Practical Workflow -->
+        <div class="section">
+            <h2>実践: Dup Check Workflow</h2>
+            <h3>Step-by-Step</h3>
+            <ol>
+                <li><code>bb-ghsa list {owner}/{repo}</code> を実行し、全 advisory を取得</li>
+                <li>Finding の vuln class (XSS, IDOR, auth bypass等) で advisory をフィルタ</li>
+                <li>影響する endpoint / parameter 名で keyword 検索</li>
+                <li>GitHub commit history で <code>git log --grep="fix\|security\|CVE"</code> 相当の検索</li>
+                <li>PR の diff を確認し、side-effect fix がないか確認</li>
+                <li>HackerOne Hacktivity で program の公開レポートを検索</li>
+                <li>全 axis clear → submit 可。1つでも hit → 精査 or abandon</li>
+            </ol>
+
+            <h3>Side-Effect Fix PR の見分け方</h3>
+            <ul>
+                <li>PR title に security keyword がないが、diff に auth check / validation 追加がある</li>
+                <li>Feature PR の中に紛れ込んだ security hardening</li>
+                <li>Dependencies update の中に含まれる security patch</li>
+                <li><strong>対策:</strong> endpoint に関連する全ての recent commits を diff で確認</li>
+            </ul>
+
+            <h3>Dup Zone の記録テンプレート</h3>
+            <pre><code>## Program: {name}
+### Known Dup Zones
+| Endpoint/Component | Vuln Class | Advisory/PR | Date |
+|---|---|---|---|
+| /api/bulk_import | Auth Bypass | GHSA-xxxx | 2026-03 |
+| /oauth/state | CSRF | H1 #12345 | 2026-02 |
+
+### Safe Zones (未報告が期待できる領域)
+- /api/v3/新機能 (3月リリース、advisory なし)
+- Mobile API (Web とは別実装)</code></pre>
+        </div>
+
+        <!-- Navigation -->
+        <div class="section" style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border); padding-top:1.5rem;">
+            <a href="51-severity-cvss.html">&larr; Prev: Severity &amp; CVSS</a>
+            <button class="complete-btn" data-module-id="52-dup" onclick="toggleComplete('52-dup')">Mark Complete</button>
+            <a href="53-platform-ops.html">Next: Platform Operations &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

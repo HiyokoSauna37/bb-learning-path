@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lessons Learned - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .lesson { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.5rem; margin-bottom:1.5rem; }
+        .lesson-header { display:flex; align-items:center; gap:0.8rem; margin-bottom:0.8rem; }
+        .lesson-icon { width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.9rem; flex-shrink:0; }
+        .lesson-icon.fail { background:var(--red-dim); color:var(--red); }
+        .lesson-icon.win { background:var(--green-dim); color:var(--green); }
+        .lesson-icon.pivot { background:var(--yellow-dim); color:var(--yellow); }
+        .lesson h4 { font-size:1rem; }
+        .lesson .context { font-size:0.85rem; color:var(--text-muted); margin-bottom:0.8rem; }
+        .lesson .takeaway { border-left:3px solid var(--accent); padding-left:1rem; margin-top:0.8rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 5: Operations &gt; Lessons Learned
+        </div>
+
+        <div class="page-header">
+            <h1>Lessons Learned &mdash; 実体験集</h1>
+            <p class="subtitle">
+                mei-bb での BB 調査 (2026年4月〜) から得た教訓。
+                失敗パターンと成功パターンを体系化。同じ轍を踏まないために。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <div class="callout">
+            <div class="callout-title">このモジュールの読み方</div>
+            <p>
+                これは実際の BB 活動 2ヶ月間のリアルな記録。ツール名やレポート ID を全て理解する必要はない。
+                各ケースの<strong>「教訓」(左ボーダー付きの部分)</strong> に注目すれば、普遍的な学びが得られる。
+            </p>
+            <p>
+                <strong>初学者は「メタ教訓」(ページ下部) から先に読むことを推奨。</strong>
+                個別のケースは自分が似た状況に遭遇した時に戻ってくると良い。
+            </p>
+        </div>
+
+        <!-- Stats -->
+        <div class="section">
+            <h2>実績サマリー (2026-04 〜 05)</h2>
+            <table>
+                <thead><tr><th>指標</th><th>値</th></tr></thead>
+                <tbody>
+                    <tr><td>総提出数</td><td>14件 (+ 5件 withdrawn pre-submission)</td></tr>
+                    <tr><td>Duplicate</td><td>4件 (GitLab, Grafana/Loki, Nitro, OPPO)</td></tr>
+                    <tr><td>In Review</td><td>1件 (Discourse)</td></tr>
+                    <tr><td>Pending Triage</td><td>9件 (LiteLLM, memos, AnythingLLM, Khoj, LibreChat, Flowise, lobe-chat, wger, kotaemon)</td></tr>
+                    <tr><td>Bounty 確定</td><td>$0 (まだ resolved なし)</td></tr>
+                    <tr><td>Withdrawn (AI Slop 撤回)</td><td>5件 (vercel/ai, Uber, Pyroscope, immich, Pyroscope)</td></tr>
+                </tbody>
+            </table>
+            <p class="annotation">
+                2ヶ月で $0 だが、Pending 9件 + In Review 1件が控えている。signal 蓄積期間。
+                最重要な学びは「撤回した 5件」から得られている。(数値は 2026-05-17 時点)
+            </p>
+        </div>
+
+        <!-- Category: False Positive / AI Slop -->
+        <div class="section">
+            <h2>Category 1: False Positive / AI Slop で撤回</h2>
+            <p>
+                AI (Claude Code) と協調して調査する際に、<strong>AI が「脆弱だ」と主張したが実際には exploit 不可能</strong>だったケース。
+                これが「AI Slop」と呼ばれるパターン。
+            </p>
+
+            <div class="lesson">
+                <div class="lesson-header">
+                    <div class="lesson-icon fail">X</div>
+                    <h4>vercel/ai: SSRF deny-list bypass (trailing-dot hostname)</h4>
+                </div>
+                <div class="context">
+                    <code>validateDownloadUrl</code> の deny-list を <code>localhost.</code> (trailing dot) で bypass できる。
+                    Windows では <code>localhost.</code> が <code>127.0.0.1</code> に解決される — が、
+                    <strong>production deploy target (Vercel Functions / Lambda / GCP) は全て Linux</strong>。
+                    Linux glibc/musl では <code>getaddrinfo('localhost.')</code> が ENOTFOUND。
+                </div>
+                <div class="takeaway">
+                    <strong>教訓:</strong> SSRF / network 系 PoC は <strong>production runtime OS (= Linux)</strong> で必ず再現確認。
+                    Windows のみの verify は AI Slop signature。
+                    <br><code>→ 対策: bb-aislop-gate に cross-OS check 追加済み</code>
+                </div>
+            </div>
+
+            <div class="lesson">
+                <div class="lesson-header">
+                    <div class="lesson-icon fail">X</div>
+                    <h4>Uber (gighub.uber.com): Firebase test phone bypass</h4>
+                </div>
+                <div class="context">
+                    Firebase Auth に test phone number (OTP=123456) が 10 個設定されていた。
+                    認証 bypass + /tasks/ IDOR で cross-task data 読み取り — と claim したが:
+                    TESTER userType / Dummy User / 0-price test tasks / 個人名 project ID (<code>-ritu</code>)
+                    → <strong>test 環境の可能性が高い</strong>。Production 証明不能。
+                </div>
+                <div class="takeaway">
+                    <strong>教訓:</strong> Production 立証は TESTER signal 排除が必須。
+                    Java NPE は write capability の証拠にならない。
+                    <code>bb-aislop-gate</code> が HOLD を返したら <strong>強制 submit-block</strong>。
+                </div>
+            </div>
+
+            <div class="lesson">
+                <div class="lesson-header">
+                    <div class="lesson-icon fail">X</div>
+                    <h4>Grafana / Pyroscope: query-diagnostics unauth cross-tenant</h4>
+                </div>
+                <div class="context">
+                    Live exploit 再現可能 (unauth で tenant 間の diagnostic data 読み書き)。
+                    しかし Grafana Labs は <strong>"no auth layer; use reverse proxy" と公式ドキュメントで明記</strong>。
+                    これは by-feature (=設計上の意図) であって bug ではない。
+                </div>
+                <div class="takeaway">
+                    <strong>教訓:</strong> Auth-bypass を claim する前に <strong>canonical auth doc を最初に読む</strong>。
+                    <code>bb-auth-doc-audit</code> が <code>CLOSED auth-by-operator</code> を返したら即 pivot。
+                    同一 vendor の design pattern は横展開される (Loki → Pyroscope → Mimir 全部同じ)。
+                </div>
+            </div>
+
+            <div class="lesson">
+                <div class="lesson-header">
+                    <div class="lesson-icon fail">X</div>
+                    <h4>immich: shared-link password gate scope gap</h4>
+                </div>
+                <div class="context">
+                    パスワード付き共有リンクの content endpoint にパスワードなしでアクセスできる。
+                    実装 gap は real — だが <code>album_id</code> が UUIDv4 で enumerable でなく (AC:H)、
+                    maintainer は「embedded link = URL-as-credential」設計を示唆。
+                    Design intent が ambiguous で、Informative close のリスクが高い。
+                </div>
+                <div class="takeaway">
+                    <strong>教訓:</strong> <code>bb-auth-doc-audit</code> が <code>unclear</code> を返したら <strong>AC:L は suspect by default</strong>。
+                    Design ambiguity がある場合 framing は「complete bypass」ではなく「implementation gap with open question」。
+                </div>
+            </div>
+        </div>
+
+        <!-- Category: Duplicate -->
+        <div class="section">
+            <h2>Category 2: Duplicate で $0</h2>
+
+            <div class="lesson">
+                <div class="lesson-header">
+                    <div class="lesson-icon fail">D</div>
+                    <h4>GitLab: BulkImport DNS rebinding TOCTOU SSRF</h4>
+                </div>
+                <div class="context">
+                    3 pipeline の <code>fetch_as_mirror</code> に <code>resolved_address</code> 渡し漏れ。
+                    提出当日 (2026-04-28) に dup 判定、先行 report #3565700 に集約済み。
+                </div>
+                <div class="takeaway">
+                    <strong>教訓:</strong> GitLab のような大手プログラムでは「同じ root cause の variant」は
+                    全て 1 report に consolidate される。encoding/placement の差異は「同じ bug」扱い。
+                    <br>Dup zone: BulkImport <code>resolved_address</code> 系は完全 redzone。
+                </div>
+            </div>
+
+            <div class="lesson">
+                <div class="lesson-header">
+                    <div class="lesson-icon fail">D</div>
+                    <h4>Nitro: routeRules proxy scope bypass (%2f..%2f)</h4>
+                </div>
+                <div class="context">
+                    GHSA-5w89-w975-hf9q のパッチ公開 <strong>2日後</strong> に incomplete-fix variant を submit。
+                    67% dup risk と予想していた通り dup。Triager が明確に
+                    「encoding/placement variations = exploitation techniques of the same root cause」と consolidation 方針を示した。
+                </div>
+                <div class="takeaway">
+                    <strong>教訓:</strong> parser differential 系は encoding variant を並べても同一 root cause 扱い。
+                    <strong>別の sink</strong> (isPathInScope 以外の routing primitive) を狙う必要がある。
+                    Dup risk 67% で「honest caveats 付きで submit」は signal 損失ゼロ (dup は signal 計算から除外) なので判断は正しかった。
+                </div>
+            </div>
+
+            <div class="lesson">
+                <div class="lesson-header">
+                    <div class="lesson-icon fail">D</div>
+                    <h4>OPPO: drp.myoppo.com open redirect via state param</h4>
+                </div>
+                <div class="context">
+                    OAuth callback の <code>state</code> パラメータが Location header に無検証で反射。
+                    3 regional front (CN/SG/IN) 同一 defect。2ヶ月以上前の #3578822 が先行 —
+                    <strong>H1 の private non-disclosed report は外部から検知不可能</strong>。
+                </div>
+                <div class="takeaway">
+                    <strong>教訓:</strong> HackerOne の非公開 prior report は hacktivity feed にも dashboard にも出ない。
+                    <code>bb-submission-status</code> Layer 1/2/3 でも fully cover 不能。
+                    大手プログラムの low-hanging fruit (open redirect 等) は latent dup が常に存在する前提で動く。
+                    <br>$20–$45 (Low row) 期待値で submit する判断自体は合理的 (signal loss = 0)。
+                </div>
+            </div>
+        </div>
+
+        <!-- Category: Success / In-progress -->
+        <div class="section">
+            <h2>Category 3: 有効な発見 (Pending/In Review)</h2>
+
+            <div class="lesson">
+                <div class="lesson-header">
+                    <div class="lesson-icon win">O</div>
+                    <h4>Discourse: PostsController#revert array id bypass (In Review)</h4>
+                </div>
+                <div class="context">
+                    <code>?id[]=ownX&id[]=victimY</code> で <code>PostRevision.find_by(post_id: array)</code> が
+                    Y の row を返し、X に対する権限チェックを通過。Moderator が他者の revision history を抽出可能。
+                    Pre-screen passed (2026-05-07)。同プログラムの prior CVE を citation して severity を正当化。
+                </div>
+                <div class="takeaway">
+                    <strong>成功要因:</strong>
+                    <ul>
+                        <li>Precedent citation (CVE-2026-31805, CVE-2026-33394) で severity framing を固めた</li>
+                        <li>E2E PoC (control 404 → bypass 201 → leak 200) で再現性を完全に示した</li>
+                        <li>Program-specific severity table を参照して High にした (CVSS 5.5 だが policy override)</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="lesson">
+                <div class="lesson-header">
+                    <div class="lesson-icon win">O</div>
+                    <h4>kotaemon: Pre-auth RCE via MCP server config (Critical 9.8)</h4>
+                </div>
+                <div class="context">
+                    Gradio UI の hidden handler が <code>gradio_client</code> から直接 invoke 可能。
+                    MCP server config で任意コマンド実行。verified ×3 (Windows + Linux + Gradio toy)。
+                </div>
+                <div class="takeaway">
+                    <strong>成功要因:</strong>
+                    <ul>
+                        <li>Gradio <code>gr.update(visible=False)</code> が server-side auth ではないことの深い理解</li>
+                        <li>3 環境での independent reproduction</li>
+                        <li>Caveats & Limitations 7 項目の honest disclosure</li>
+                        <li>先行 GHSA (path traversal) との差異を明確にして dup risk を排除</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="lesson">
+                <div class="lesson-header">
+                    <div class="lesson-icon win">O</div>
+                    <h4>wger: Sibling-unpatched gym=None authorization bypass (Critical 9.9)</h4>
+                </div>
+                <div class="context">
+                    CVE-2026-43948 のパッチが <code>is_same_gym()</code> を導入したが、3 call site に propagate されず。
+                    <code>gym=None</code> ユーザーに対して delete/deactivate/activate が cross-tenant で可能。
+                </div>
+                <div class="takeaway">
+                    <strong>成功要因:</strong>
+                    <ul>
+                        <li>Incomplete-fix variant strategy の教科書的な成功例</li>
+                        <li>Positive ×3 + Negative ×3 + Symmetric revert で完璧な再現性</li>
+                        <li>パッチ commit からわずか 12 日後に submit</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Meta lessons -->
+        <div class="section">
+            <h2>メタ教訓 (全体を通して)</h2>
+
+            <div class="card">
+                <h4>1. AI との協調で最も危険なのは「AI が確信を持って間違える」こと</h4>
+                <p>
+                    AI (Claude Code) は structural evidence (コードの字面) だけで「脆弱です、submit しましょう」と言う。
+                    <strong>runtime で刺さるかどうか</strong>は別問題。
+                    End-to-end で sink での actual exploit demo を確認するまで verified 禁止。
+                </p>
+            </div>
+
+            <div class="card">
+                <h4>2. 撤回は恥ではなく、submit の品質を上げる投資</h4>
+                <p>
+                    6件の pre-submission withdrawal は「submit していたら N/A で signal -5 だった」ケース。
+                    Self-audit gate (bb-aislop-gate, bb-fp-detector, bb-auth-doc-audit) を通すことで
+                    submit 精度が上がり、triage 側の信頼も得られる。
+                </p>
+            </div>
+
+            <div class="card">
+                <h4>3. Timing > Skill (特に incomplete-fix variant)</h4>
+                <p>
+                    Advisory 公開から 3日以内に variant を見つけて submit する speed が最も重要。
+                    30日超は他の hunter が見つけている可能性が高すぎる。
+                    bb-ghsa list の日次 watch → patch diff 即読み → sibling grep → PoC → submit のパイプライン化が鍵。
+                </p>
+            </div>
+
+            <div class="card">
+                <h4>4. By-feature vs Bug の見極めが最大の time-saver</h4>
+                <p>
+                    実装 gap が存在しても vendor が「それは仕様です」と言えるものは bug ではない。
+                    Auth doc / maintainer comment / product design (マルチテナント? シングルテナント?) を
+                    <strong>コードを読む前に</strong>確認することで、false-positive 調査に費やす時間を 80% 削減できる。
+                </p>
+            </div>
+
+            <div class="card">
+                <h4>5. 大手プログラムの low-hanging fruit は「見えない先行者」が常にいる</h4>
+                <p>
+                    HackerOne の private report は外部から検知不可能。
+                    GitLab / Uber / OPPO 等の大手で「簡単に見つかる」ものは latent dup の可能性が常にある。
+                    戦略: (a) deep logic chain に pivot する、(b) マイナーな OSS で確実な finding を積む、
+                    (c) dup risk を受容して signal loss = 0 で submit する (early dup は signal 計算除外)。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="54-ai-slop.html">AI Slop Avoidance</a> — 品質担保の詳細</li>
+                <li><a href="52-dup-avoidance.html">Duplicate Avoidance Strategy</a> — Dup zone 管理</li>
+                <li><a href="25-incomplete-fix.html">Incomplete Fix Variant Strategy</a> — 成功パターンの手法</li>
+                <li><a href="55-signal-reputation.html">Signal & Reputation Management</a> — dup と signal の関係</li>
+                <li>mei-bb: <code>findings/_submission_log.md</code> — 全提出の live tracking</li>
+                <li>mei-bb: <code>findings/_retro_*.md</code> — Session retrospective</li>
+            </ul>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="57-lessons" onclick="toggleComplete('57-lessons')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="56-tax-legal.html">&larr; 前: Tax & Legal</a>
+            <a href="58-workflow-tooling.html">次: Workflow & Tooling &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

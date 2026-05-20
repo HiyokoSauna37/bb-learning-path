@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subdomain Enumeration - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn {
+            display: inline-block;
+            padding: 0.5rem 1.2rem;
+            border: 1px solid var(--green);
+            border-radius: 6px;
+            background: transparent;
+            color: var(--green);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .complete-btn:hover { background: var(--green); color: #000; }
+        .complete-btn.is-complete { background: var(--green); color: #000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 3: Recon &amp; Blackbox &gt; Subdomain Enumeration
+        </div>
+
+        <div class="page-header">
+            <h1>Subdomain Enumeration</h1>
+            <p class="subtitle">
+                Attack surface の拡大は subdomain 発見から始まる。Passive と Active の両面から隠れた資産を洗い出す。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-practice">Practice</span>
+            </div>
+        </div>
+
+        <div class="callout success">
+            <div class="callout-title">Phase 2 → Phase 3: なぜ Blackbox Testing を学ぶのか</div>
+            <p>
+                Phase 2 ではソースコードを読んで脆弱性を見つけた (Whitebox)。
+                しかし HackerOne / Intigriti / IssueHunt の多くのプログラムでは<strong>ソースコードは提供されない</strong> — 外部から動いているWebアプリをテストする。
+                Phase 2 で学んだ「どんなバグがあるか」の知識はそのまま使える。Phase 3 では<strong>コードが見えない状態で同じバグを見つける方法</strong>を学ぶ。
+                「中身を知っている → 外から探す」の順番だから効率的に学べる。
+            </p>
+        </div>
+
+        <!-- Section: Why -->
+        <div class="section">
+            <h2>なぜ Subdomain Enumeration が重要か</h2>
+            <p>
+                大企業のプログラムでは *.target.com がスコープになっていることが多い。
+                メインのドメインは堅牢でも、dev.target.com や staging.target.com のような
+                忘れ去られた subdomain には古いコード、デフォルト認証情報、未パッチの脆弱性が残っている。
+            </p>
+            <p>
+                Subdomain enumeration は recon の最初のステップであり、ここで得られる結果が
+                後続の content discovery, vulnerability scanning の全体の質を決定する。
+            </p>
+        </div>
+
+        <!-- Section: Passive Enumeration -->
+        <div class="section">
+            <h2>Passive Enumeration</h2>
+            <p>
+                ターゲットに直接リクエストを送らずに subdomain を収集する手法。
+                検知リスクがゼロであり、最初に実行すべきステップ。
+            </p>
+
+            <h3>subfinder</h3>
+            <p>ProjectDiscovery のツール。複数の passive source を並列クエリし、高速に結果を返す。</p>
+<pre><code># 基本実行
+subfinder -d target.com -o subdomains.txt
+
+# 複数ソース＋再帰的
+subfinder -d target.com -recursive -all -o subs_full.txt
+
+# API key 設定 ($HOME/.config/subfinder/provider-config.yaml)
+# SecurityTrails, Shodan, VirusTotal などの API key を設定すると結果が倍増</code></pre>
+
+            <h3>amass (Passive Mode)</h3>
+            <p>OWASP プロジェクト。subfinder より多くのデータソースに対応するが、動作が重い。</p>
+<pre><code># Passive only (Active brute force を行わない)
+amass enum -passive -d target.com -o amass_passive.txt
+
+# Config file で API key 管理
+amass enum -passive -d target.com -config config.ini</code></pre>
+
+            <h3>Certificate Transparency (crt.sh)</h3>
+            <p>SSL証明書の発行ログから subdomain を取得。無料で大量のデータが得られる。</p>
+<pre><code># crt.sh API
+curl -s "https://crt.sh/?q=%.target.com&output=json" | \
+  jq -r '.[].name_value' | sort -u
+
+# Wildcard 証明書も含めて取得
+curl -s "https://crt.sh/?q=%.%.target.com&output=json" | \
+  jq -r '.[].name_value' | sort -u</code></pre>
+
+            <h3>その他の Passive Source</h3>
+            <ul>
+                <li><strong>SecurityTrails</strong> — 履歴DNS情報を含む、API 無料枠あり</li>
+                <li><strong>VirusTotal</strong> — subdomain 関連情報を大量保持</li>
+                <li><strong>Shodan</strong> — SSL証明書から逆引き</li>
+                <li><strong>Censys</strong> — 証明書検索に強い</li>
+                <li><strong>dnsdumpster.com</strong> — 無料のDNS情報可視化</li>
+            </ul>
+        </div>
+
+        <!-- Section: Active Enumeration -->
+        <div class="section">
+            <h2>Active Enumeration</h2>
+            <p>
+                DNS brute force でターゲットに直接クエリを送る。Passive で見つからない
+                内部的な命名規則の subdomain を発見できるが、検知リスクがある。
+            </p>
+
+            <h3>DNS Brute Force</h3>
+<pre><code># puredns - 高速かつ resolver validation 付き
+puredns bruteforce wordlist.txt target.com \
+  --resolvers resolvers.txt -o brute_results.txt
+
+# shuffledns - massdns のラッパー
+shuffledns -d target.com -w wordlist.txt \
+  -r resolvers.txt -o shuffled_results.txt</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">Wordlist の選択が鍵</div>
+                <ul>
+                    <li><strong>SecLists/Discovery/DNS/</strong> — 汎用リスト</li>
+                    <li><strong>n0kovo_subdomains</strong> — 実際のサブドメインから生成された高品質リスト</li>
+                    <li><strong>all.txt (Jason Haddix)</strong> — 大規模ブルートフォース用</li>
+                    <li>ターゲット固有のパターンを追加（社名, 製品名, 地域コード）</li>
+                </ul>
+            </div>
+
+            <h3>Permutation (変形生成)</h3>
+            <p>既知の subdomain をベースに変形パターンを生成して追加発見を狙う。</p>
+<pre><code># altdns - 既知サブドメインからpermutation生成
+altdns -i known_subs.txt -o permuted.txt -w words.txt
+puredns resolve permuted.txt --resolvers resolvers.txt
+
+# gotator - より高速な permutation
+gotator -sub known_subs.txt -perm permutations.txt -depth 1 | \
+  puredns resolve --resolvers resolvers.txt</code></pre>
+            <p>
+                例: <code>api.target.com</code> が既知なら <code>api-dev</code>, <code>api-staging</code>,
+                <code>api2</code>, <code>api-v2</code> などを自動生成する。
+            </p>
+        </div>
+
+        <!-- Section: Validation -->
+        <div class="section">
+            <h2>Validation: Alive Check</h2>
+            <p>
+                DNS で解決できても HTTP サービスが稼働しているとは限らない。
+                実際にアクセス可能なホストだけをフィルタする。
+            </p>
+
+<pre><code># httpx - 高速な HTTP probe (ProjectDiscovery)
+cat all_subdomains.txt | httpx -o alive.txt \
+  -status-code -title -tech-detect -follow-redirects
+
+# httprobe - シンプルな alive check
+cat all_subdomains.txt | httprobe -p http:80 -p https:443
+
+# httpx で詳細情報取得
+cat all_subdomains.txt | httpx -json -o detailed.json \
+  -status-code -content-length -title -web-server -tech-detect</code></pre>
+
+            <div class="callout warning">
+                <div class="callout-title">BB視点: httpx の -tech-detect</div>
+                <p>
+                    技術スタックの特定は脆弱性仮説の構築に直結する。
+                    WordPress なら known plugin vuln、Laravel なら debug mode 露出、
+                    といった次のアクションが見える。
+                </p>
+            </div>
+        </div>
+
+        <!-- Section: Automation Pipeline -->
+        <div class="section">
+            <h2>Automation Pipeline</h2>
+            <p>日常的な recon は pipeline として自動化する。新規 subdomain の発見を継続監視。</p>
+
+<pre><code># 基本パイプライン
+subfinder -d target.com -silent | \
+  httpx -silent -status-code -title | \
+  nuclei -t cves/ -t exposures/ -o findings.txt
+
+# 定期実行で差分検知
+subfinder -d target.com -silent | sort > today.txt
+comm -13 yesterday.txt today.txt > new_subs.txt
+cat new_subs.txt | httpx -silent | nuclei -t cves/
+
+# notify で Slack/Discord に通知
+cat new_subs.txt | httpx -silent | \
+  nuclei -t cves/ -silent | notify -provider slack</code></pre>
+        </div>
+
+        <!-- Section: Subdomain Takeover -->
+        <div class="section">
+            <h2>Subdomain Takeover</h2>
+            <p>
+                DNS の CNAME レコードが指す先のサービスが解約されている場合、
+                攻撃者がそのサービスを claim して subdomain を乗っ取れる。
+            </p>
+
+            <h3>仕組み</h3>
+            <ol>
+                <li><code>dev.target.com</code> が CNAME で <code>target.herokuapp.com</code> を指す</li>
+                <li>target が Heroku アプリを削除する</li>
+                <li>DNS の CNAME は残ったまま (dangling CNAME)</li>
+                <li>攻撃者が Heroku で <code>target.herokuapp.com</code> を作成して claim</li>
+                <li><code>dev.target.com</code> へのアクセスが攻撃者のコンテンツを表示</li>
+            </ol>
+
+            <h3>検出方法</h3>
+<pre><code># subjack - 自動チェック
+subjack -w subdomains.txt -t 100 -timeout 30 -o takeover.txt
+
+# nuclei takeover templates
+cat subdomains.txt | nuclei -t takeovers/
+
+# 手動確認: CNAME 先のサービスが 404/not found を返すか
+dig CNAME suspicious.target.com
+curl -I suspicious.target.com</code></pre>
+
+            <div class="callout warning">
+                <div class="callout-title">注意: False Positive に気をつける</div>
+                <p>
+                    CNAME 先が存在するが単に 404 を返しているケースは takeover ではない。
+                    Fastly のように CNAME が *.fastly-edge.com を指していても、
+                    そのドメインが実際に unregistered でなければ takeover は成立しない。
+                    必ず vulnerable subdomain 自身に curl して確認すること。
+                </p>
+            </div>
+        </div>
+
+        <!-- Section: Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Passive first</strong> — 検知リスクなしで大量の subdomain を収集</li>
+                    <li><strong>複数ソースの組み合わせ</strong> — 1つのツールで全ては見つからない</li>
+                    <li><strong>Validation は必須</strong> — DNS 解決だけでなく HTTP alive check まで行う</li>
+                    <li><strong>Permutation で追加発見</strong> — 既知の命名規則から推測を広げる</li>
+                    <li><strong>継続的な監視</strong> — 新規 subdomain は新しい attack surface</li>
+                    <li><strong>Takeover は High severity</strong> — dangling CNAME の検出は低コストで高報酬</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Section: References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://github.com/projectdiscovery/subfinder" target="_blank">subfinder - GitHub</a></li>
+                <li><a href="https://github.com/projectdiscovery/httpx" target="_blank">httpx - GitHub</a></li>
+                <li><a href="https://github.com/OWASP/Amass" target="_blank">OWASP Amass - GitHub</a></li>
+                <li><a href="https://github.com/d3mondev/puredns" target="_blank">puredns - GitHub</a></li>
+                <li><a href="https://crt.sh" target="_blank">crt.sh - Certificate Transparency Search</a></li>
+                <li><a href="https://github.com/EdOverflow/can-i-take-over-xyz" target="_blank">can-i-take-over-xyz</a> — takeover 可能なサービス一覧</li>
+            </ul>
+        </div>
+
+        <!-- Complete button -->
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="30-sub" onclick="toggleComplete('30-sub')">Mark Complete</button>
+        </div>
+
+        <!-- Navigation -->
+        <div class="page-nav">
+            <a href="29-huntr-workflow.html">&larr; 前: huntr Workflow</a>
+            <a href="31-content-discovery.html">次: Content &amp; Endpoint Discovery &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

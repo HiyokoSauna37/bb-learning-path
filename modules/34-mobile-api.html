@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mobile API Testing - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn {
+            display: inline-block;
+            padding: 0.5rem 1.2rem;
+            border: 1px solid var(--green);
+            border-radius: 6px;
+            background: transparent;
+            color: var(--green);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .complete-btn:hover { background: var(--green); color: #000; }
+        .complete-btn.is-complete { background: var(--green); color: #000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 3: Recon &amp; Blackbox &gt; Mobile API Testing
+        </div>
+
+        <div class="page-header">
+            <h1>Mobile API Testing</h1>
+            <p class="subtitle">
+                モバイルアプリの通信を intercept し、Web UI には存在しない API endpoint や
+                hardcoded secrets を発見する。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-practice">Practice</span>
+            </div>
+        </div>
+
+        <!-- Section: Why Mobile -->
+        <div class="section">
+            <h2>なぜ Mobile API Testing が有効か</h2>
+            <p>
+                多くの企業は Web とモバイルで同じ backend API を共有するが、
+                モバイル固有の endpoint は Web frontend からは見えない。
+                これらの endpoint は往々にして認証・認可チェックが不十分。
+            </p>
+            <ul>
+                <li>Web UI には表示されない管理用 endpoint がモバイルアプリ経由でアクセス可能</li>
+                <li>モバイルアプリの binary にハードコードされた API key / secret</li>
+                <li>Certificate pinning を bypass すれば全通信が丸見え</li>
+                <li>古いバージョンのアプリが古い(脆弱な) API を使い続けている</li>
+            </ul>
+        </div>
+
+        <!-- Section: Traffic Interception -->
+        <div class="section">
+            <h2>Traffic Interception (Proxy Setup)</h2>
+
+            <h3>Android</h3>
+<pre><code># 1. Burp の CA 証明書をエクスポート (DER形式)
+# Burp → Proxy → Import/export CA certificate → Certificate in DER format
+
+# 2. 証明書をシステムストアにインストール (Android 7+ は root 必要)
+# 非root: ADB で user store に追加
+adb push burp-cert.der /sdcard/
+# Settings → Security → Install from storage
+
+# 3. root 端末の場合: system store に直接配置
+openssl x509 -inform DER -in burp-cert.der -out burp-cert.pem
+hash=$(openssl x509 -inform PEM -subject_hash_old -in burp-cert.pem | head -1)
+mv burp-cert.pem ${hash}.0
+adb push ${hash}.0 /system/etc/security/cacerts/
+adb shell chmod 644 /system/etc/security/cacerts/${hash}.0
+
+# 4. WiFi proxy を Burp の IP:port に設定</code></pre>
+
+            <h3>iOS</h3>
+<pre><code># 1. Burp CA 証明書をブラウザからダウンロード
+# http://burp (proxy経由でアクセス)
+
+# 2. Settings → Profile Downloaded → Install
+# 3. Settings → General → About → Certificate Trust Settings → Enable
+
+# 4. WiFi 設定で HTTP Proxy を Manual に設定
+# Server: Burp の IP, Port: 8080</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">Tips: Android Emulator</div>
+                <p>
+                    物理デバイスがない場合、Genymotion や Android Studio Emulator を使用。
+                    Emulator なら root 権限が容易に取得でき、system CA 配置も簡単。
+                    ただし一部アプリは emulator detection で動作しない。
+                </p>
+            </div>
+        </div>
+
+        <!-- Section: Certificate Pinning Bypass -->
+        <div class="section">
+            <h2>Certificate Pinning Bypass</h2>
+            <p>
+                セキュアなアプリは特定の証明書のみを信頼する (pinning)。
+                これを bypass しないと proxy で通信を見ることができない。
+            </p>
+
+            <h3>Frida + objection</h3>
+<pre><code># objection: Frida ベースのランタイム操作ツール
+# インストール
+pip install objection
+
+# アプリにアタッチして pinning を無効化
+objection -g com.target.app explore
+# objection シェル内で:
+android sslpinning disable
+ios sslpinning disable
+
+# Frida スクリプトで手動 bypass
+frida -U -f com.target.app -l ssl_pinning_bypass.js --no-pause</code></pre>
+
+            <h3>汎用的な Frida スクリプト</h3>
+<pre><code>// Android SSL pinning bypass (Universal)
+Java.perform(function() {
+    var TrustManagerImpl = Java.use(
+        'com.android.org.conscrypt.TrustManagerImpl');
+    TrustManagerImpl.verifyChain.implementation = function() {
+        return arguments[0]; // 全証明書を信頼
+    };
+});
+
+// OkHttp CertificatePinner bypass
+Java.perform(function() {
+    var CertificatePinner = Java.use('okhttp3.CertificatePinner');
+    CertificatePinner.check.overload('java.lang.String',
+        'java.util.List').implementation = function() {
+        // pinning チェックをスキップ
+    };
+});</code></pre>
+
+            <div class="callout warning">
+                <div class="callout-title">注意: Root Detection</div>
+                <p>
+                    多くのアプリは root 検出も実装している。Frida で root detection bypass も
+                    同時に必要になるケースが多い。Magisk の MagiskHide や Frida スクリプトで対応。
+                </p>
+            </div>
+        </div>
+
+        <!-- Section: APK Reverse Engineering -->
+        <div class="section">
+            <h2>APK/IPA Reverse Engineering</h2>
+
+            <h3>Android (APK)</h3>
+<pre><code># jadx: APK → Java ソースコード (デコンパイル)
+jadx -d output_dir/ target.apk
+
+# apktool: リソース + smali 抽出
+apktool d target.apk -o apk_extracted/
+
+# jadx-gui: GUI でコードブラウジング
+jadx-gui target.apk
+
+# 探すべきもの:
+grep -r "api_key\|secret\|password\|token" output_dir/
+grep -r "https://\|http://" output_dir/ | grep -v "schema.org"
+grep -r "firebase\|aws\|azure" output_dir/</code></pre>
+
+            <h3>iOS (IPA)</h3>
+<pre><code># IPA は実質 ZIP
+unzip target.ipa -d extracted/
+
+# class-dump (Objective-C)
+class-dump extracted/Payload/App.app/App
+
+# Hopper Disassembler / IDA Pro で解析
+# Swift の場合は swift-demangle でシンボル復元
+
+# strings で埋め込み文字列を抽出
+strings extracted/Payload/App.app/App | grep -i "api\|key\|secret"</code></pre>
+
+            <h3>MobSF (Mobile Security Framework)</h3>
+<pre><code># Docker で MobSF を起動
+docker run -it --rm -p 8000:8000 opensecurity/mobile-security-framework-mobsf
+
+# ブラウザで http://localhost:8000 にアクセス
+# APK/IPA をアップロードすると自動解析:
+# - Hardcoded secrets
+# - Insecure permissions
+# - Network security config
+# - Exported components
+# - Vulnerable libraries</code></pre>
+        </div>
+
+        <!-- Section: Hardcoded Secrets -->
+        <div class="section">
+            <h2>Hardcoded Secrets in Mobile Apps</h2>
+            <p>開発者がモバイルアプリにハードコードしがちな機密情報:</p>
+            <ul>
+                <li><strong>API keys</strong> — Google Maps, Firebase, AWS, Stripe</li>
+                <li><strong>OAuth client secrets</strong> — client_id は公開だが client_secret はダメ</li>
+                <li><strong>Firebase config</strong> — databaseURL, storageBucket が open rules だと致命的</li>
+                <li><strong>Internal API endpoints</strong> — staging/dev 環境の URL</li>
+                <li><strong>Encryption keys</strong> — ローカルストレージの暗号化キー</li>
+            </ul>
+
+<pre><code># nuclei mobile templates
+nuclei -t mobile/ -target extracted_source/
+
+# 手動検索パターン
+grep -rn "AIza" .           # Google API Key
+grep -rn "AKIA" .           # AWS Access Key
+grep -rn "sk_live" .        # Stripe Secret Key
+grep -rn "client_secret" .  # OAuth Secret
+grep -rn "-----BEGIN" .     # Private Keys</code></pre>
+        </div>
+
+        <!-- Section: Deep Link -->
+        <div class="section">
+            <h2>Deep Link Abuse</h2>
+            <p>
+                Deep link (custom URL scheme / App Links) の実装ミスにより、
+                攻撃者のWebページから意図しないアプリ内動作を誘発できる。
+            </p>
+
+<pre><code># AndroidManifest.xml から Deep Link スキーム抽出
+grep -A5 "android.intent.action.VIEW" AndroidManifest.xml
+
+# 典型的な脆弱パターン:
+# target://callback?token=USER_TOKEN  → token leak via referer
+# target://open?url=https://evil.com  → Open Redirect in app
+# target://payment?amount=0.01        → 金額改ざん
+
+# adb で Deep Link テスト
+adb shell am start -a android.intent.action.VIEW \
+  -d "target://callback?token=stolen"
+
+# iOS: URL scheme テスト
+# Safari で target:// を開く</code></pre>
+        </div>
+
+        <!-- Section: Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Mobile は隠れた API の宝庫</strong> — Web UI に存在しない endpoint が見つかる</li>
+                    <li><strong>Certificate pinning は bypass 可能</strong> — Frida/objection で数分で突破</li>
+                    <li><strong>APK は難読化されていても読める</strong> — jadx で大部分のロジックが復元可能</li>
+                    <li><strong>Hardcoded secret は高確率で存在する</strong> — 特に Firebase, AWS key</li>
+                    <li><strong>Deep link は見落とされがち</strong> — Open Redirect, Token Leak の起点になる</li>
+                    <li><strong>古いバージョンの APK を入手</strong> — APKMirror 等で過去バージョンをダウンロードして比較</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Section: References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://github.com/frida/frida" target="_blank">Frida - GitHub</a></li>
+                <li><a href="https://github.com/sensepost/objection" target="_blank">objection - GitHub</a></li>
+                <li><a href="https://github.com/skylot/jadx" target="_blank">jadx - GitHub</a></li>
+                <li><a href="https://github.com/MobSF/Mobile-Security-Framework-MobSF" target="_blank">MobSF - GitHub</a></li>
+                <li><a href="https://mas.owasp.org/" target="_blank">OWASP Mobile Application Security</a></li>
+                <li><a href="https://github.com/OWASP/owasp-mastg" target="_blank">OWASP MASTG (Mobile App Security Testing Guide)</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete button -->
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="34-mobile" onclick="toggleComplete('34-mobile')">Mark Complete</button>
+        </div>
+
+        <!-- Navigation -->
+        <div class="page-nav">
+            <a href="33-api-testing.html">&larr; 前: API Security Testing</a>
+            <a href="35-cloud-misconfig.html">次: Cloud Misconfiguration &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

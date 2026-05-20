@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Encoding & Serialization - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 0: Foundation &gt; Encoding & Serialization
+        </div>
+
+        <div class="page-header">
+            <h1>Encoding & Serialization</h1>
+            <p class="subtitle">エンコーディングとシリアライゼーションの差異を理解し、WAF bypass や parser differential 攻撃の基礎を身につける。</p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-practice">Practice</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>URL Encoding (Percent Encoding)</h2>
+            <p>
+                URL で使用できない文字を <code>%HH</code> (16進数) 形式に変換する。RFC 3986 で規定。
+                セキュリティ上重要なのは、<strong>デコードのタイミング</strong>と<strong>回数</strong>。
+            </p>
+
+            <h3>基本的な変換</h3>
+            <table>
+                <thead><tr><th>文字</th><th>Encoded</th><th>用途</th></tr></thead>
+                <tbody>
+                    <tr><td><code>&lt;</code></td><td><code>%3C</code></td><td>XSS payload に必須</td></tr>
+                    <tr><td><code>&gt;</code></td><td><code>%3E</code></td><td>XSS payload に必須</td></tr>
+                    <tr><td><code>/</code></td><td><code>%2F</code></td><td>Path traversal</td></tr>
+                    <tr><td><code>.</code></td><td><code>%2E</code></td><td>Path traversal (..)</td></tr>
+                    <tr><td><code>&amp;</code></td><td><code>%26</code></td><td>Parameter pollution</td></tr>
+                    <tr><td><code>=</code></td><td><code>%3D</code></td><td>Parameter injection</td></tr>
+                    <tr><td><code>space</code></td><td><code>%20</code> or <code>+</code></td><td>Context dependent</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Double Encoding</h3>
+            <p>
+                WAF やフィルタが1回だけデコードして検査する場合、2重エンコードでバイパスできる。
+                アプリケーションが2回目のデコードを行い、最終的に悪意のある文字列が復元される。
+            </p>
+<pre><code># 通常のエンコード (WAF がブロック)
+../etc/passwd → %2e%2e%2fetc%2fpasswd
+
+# Double encoding (WAF をバイパス)
+%2e → %252e (% 自体を %25 にエンコード)
+../ → %252e%252e%252f
+
+# WAF が1回デコード → %2e%2e%2f (無害に見える)
+# アプリが2回目デコード → ../ (path traversal 成立)</code></pre>
+
+            <h3>Double Encoding Bypass の流れ</h3>
+            <div class="mermaid">
+flowchart LR
+    A["攻撃者が送信:<br/>%252e%252e%252f"] --> WAF{"WAF チェック"}
+    WAF -->|"1回目 decode:<br/>%2e%2e%2f<br/>→ 無害に見える"| Pass["通過"]
+    Pass --> App{"App が再decode"}
+    App -->|"2回目 decode:<br/>../<br/>→ Path Traversal!"| Vuln["脆弱性発動"]
+
+    style Vuln fill:#f85149,color:#fff
+            </div>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: Double Encoding は WAF bypass の定番</div>
+                <p>
+                    Cloudflare, AWS WAF, ModSecurity などの WAF が1回デコードして検査する場合に有効。
+                    Path traversal, XSS, SQL Injection のフィルタ回避で頻出。
+                    Burp の Decoder タブで手動エンコード/デコードを繰り返して検証する。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Base64</h2>
+            <p>
+                バイナリデータを ASCII テキストに変換するエンコーディング。暗号化ではない。
+                HTTP ヘッダー、Cookie、JWT の transport に広く使われる。
+            </p>
+
+            <h3>Variant に注意</h3>
+            <table>
+                <thead><tr><th>Variant</th><th>文字セット</th><th>用途</th></tr></thead>
+                <tbody>
+                    <tr><td>Standard (RFC 4648)</td><td>A-Z, a-z, 0-9, +, /</td><td>Email (MIME), PEM</td></tr>
+                    <tr><td>URL-safe</td><td>A-Z, a-z, 0-9, -, _</td><td>JWT, URL parameter</td></tr>
+                    <tr><td>No padding</td><td>= を省略</td><td>JWT (常に padding なし)</td></tr>
+                </tbody>
+            </table>
+
+<pre><code># Base64 decode (コマンドライン)
+echo "YWRtaW46cGFzc3dvcmQ=" | base64 -d
+# → admin:password
+
+# Python
+import base64
+base64.b64decode("YWRtaW46cGFzc3dvcmQ=")
+# → b'admin:password'
+
+# URL-safe Base64 (JWT で使用)
+base64.urlsafe_b64decode("eyJhbGciOiJIUzI1NiJ9")</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: Base64 は「隠しているだけ」</div>
+                <p>
+                    Cookie やトークンが Base64 で「暗号化」されているように見えても、単なるエンコード。
+                    デコードすると JSON や serialized object が出てくることが多い。
+                    改ざんして re-encode すれば privilege escalation が成立する場合がある。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>HTML Entities</h2>
+            <p>
+                HTML で特殊文字を安全に表示するためのエンコーディング。XSS 対策の基本だが、Context によっては不十分。
+            </p>
+            <table>
+                <thead><tr><th>文字</th><th>Entity (名前)</th><th>Entity (数値)</th></tr></thead>
+                <tbody>
+                    <tr><td><code>&lt;</code></td><td><code>&amp;lt;</code></td><td><code>&amp;#60;</code> / <code>&amp;#x3C;</code></td></tr>
+                    <tr><td><code>&gt;</code></td><td><code>&amp;gt;</code></td><td><code>&amp;#62;</code></td></tr>
+                    <tr><td><code>&amp;</code></td><td><code>&amp;amp;</code></td><td><code>&amp;#38;</code></td></tr>
+                    <tr><td><code>"</code></td><td><code>&amp;quot;</code></td><td><code>&amp;#34;</code></td></tr>
+                    <tr><td><code>'</code></td><td><code>&amp;apos;</code></td><td><code>&amp;#39;</code></td></tr>
+                </tbody>
+            </table>
+
+            <h3>Context-dependent な XSS bypass</h3>
+<pre><code>&lt;!-- HTML body context: entity が有効 --&gt;
+&amp;lt;script&amp;gt; → 安全 (ブラウザが entity を表示するだけ)
+
+&lt;!-- しかし JavaScript context では entity は解釈されない --&gt;
+&lt;script&gt;var x = '&amp;lt;injection&amp;gt;';&lt;/script&gt;
+→ entity がそのまま文字列になるだけ。逆に ' を使えば脱出可能。
+
+&lt;!-- href/src context: javascript: scheme --&gt;
+&lt;a href="javascript:alert(1)"&gt;click&lt;/a&gt;
+&lt;a href="java&amp;#x73;cript:alert(1)"&gt;click&lt;/a&gt; ← entity デコード後に実行</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Unicode Normalization</h2>
+            <p>
+                Unicode は同じ「見た目」の文字を複数の方法で表現できる。正規化 (Normalization) の差異が
+                セキュリティフィルタのバイパスに悪用される。
+            </p>
+
+            <h3>4つの正規化形式</h3>
+            <table>
+                <thead><tr><th>形式</th><th>説明</th><th>例</th></tr></thead>
+                <tbody>
+                    <tr><td>NFC</td><td>Canonical Decomposition + Composition</td><td>e + combining accent → e (composed)</td></tr>
+                    <tr><td>NFD</td><td>Canonical Decomposition</td><td>e → e + combining accent (decomposed)</td></tr>
+                    <tr><td>NFKC</td><td>Compatibility Decomposition + Composition</td><td>fullwidth A (U+FF21) → A</td></tr>
+                    <tr><td>NFKD</td><td>Compatibility Decomposition</td><td>fi ligature → f + i</td></tr>
+                </tbody>
+            </table>
+
+            <h3>攻撃例: NFKC normalization bypass</h3>
+<pre><code># Fullwidth 文字でフィルタバイパス
+# U+FF1C = fullwidth &lt;  U+FF1E = fullwidth &gt;
+# フィルタは ASCII の &lt;&gt; のみチェック
+
+Input: ＜script＞alert(1)＜/script＞
+↓ NFKC normalization (アプリ内部)
+Result: &lt;script&gt;alert(1)&lt;/script&gt;
+
+# 同様に / (U+FF0F) → / で path traversal
+Input: ..／etc／passwd
+↓ NFKC
+Result: ../etc/passwd</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: Unicode trick の実例</div>
+                <p>
+                    GitHub のファイル名や URL で Unicode normalization を悪用した報告が複数ある。
+                    特に IDN (国際化ドメイン名) での homograph attack、URL parser での normalization timing の差異が狙い目。
+                    Python の <code>unicodedata.normalize('NFKC', input)</code> で事前テスト可能。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>JSON vs XML Parsing Differences</h2>
+
+            <h3>JSON の罠</h3>
+            <ul>
+                <li><strong>Duplicate keys</strong>: <code>{"role":"user","role":"admin"}</code> → 実装により最初か最後が優先</li>
+                <li><strong>Unicode escape</strong>: <code><</code> = <code>&lt;</code> → WAF が見逃す可能性</li>
+                <li><strong>Comment injection</strong>: 一部パーサーは <code>//</code> や <code>/* */</code> を許容</li>
+                <li><strong>Numeric overflow</strong>: 大きな整数で ID 衝突 (JavaScript の Number.MAX_SAFE_INTEGER 超過)</li>
+            </ul>
+
+            <h3>XML の罠</h3>
+            <ul>
+                <li><strong>XXE (XML External Entity)</strong>: 外部ファイル読み取り、SSRF</li>
+                <li><strong>CDATA section</strong>: <code>&lt;![CDATA[&lt;script&gt;alert(1)&lt;/script&gt;]]&gt;</code></li>
+                <li><strong>Encoding declaration</strong>: <code>&lt;?xml encoding="UTF-7"?&gt;</code> でフィルタバイパス</li>
+                <li><strong>Namespace confusion</strong>: 同名要素を異なる namespace で多重定義</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Content-Type の挙動差異</h2>
+            <p>
+                リクエストの <code>Content-Type</code> を変更すると、サーバー側の parser が変わり、
+                フィルタやバリデーションをバイパスできる場合がある。
+            </p>
+<pre><code># 通常の JSON request (WAF が body を検査)
+POST /api/update HTTP/1.1
+Content-Type: application/json
+
+{"name":"&lt;script&gt;alert(1)&lt;/script&gt;"}
+
+# Content-Type を変更して WAF をバイパス
+POST /api/update HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+name=%3Cscript%3Ealert(1)%3C%2Fscript%3E
+
+# あるいは multipart で
+Content-Type: multipart/form-data; boundary=----
+------
+Content-Disposition: form-data; name="name"
+
+&lt;script&gt;alert(1)&lt;/script&gt;
+--------</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: Parser Differential は SSRF/Path Traversal の鍵</div>
+                <p>
+                    URL parser (new URL() in JS vs urllib in Python vs URI in Ruby) の解釈差異で SSRF bypass が成立する。
+                    例: <code>http://evil.com\@target.com</code> で一方は evil.com、他方は target.com を host と解釈。
+                    Orange Tsai の parser differential 研究が必読。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>実践: エンコーディングの組み合わせ</h2>
+<pre><code># XSS フィルタバイパスの例 (複数エンコーディングの組み合わせ)
+
+# 1. HTML entity + JavaScript
+&lt;img src=x onerror="&#97;&#108;&#101;&#114;&#116;&#40;&#49;&#41;"&gt;
+
+# 2. URL encoding in href
+&lt;a href="javascript:%61%6c%65%72%74%28%31%29"&gt;click&lt;/a&gt;
+
+# 3. Double URL encode for path traversal
+GET /download?file=%252e%252e%252f%252e%252e%252fetc%252fpasswd
+
+# 4. Unicode normalization + URL encode
+GET /api/files/..%EF%BC%8F..%EF%BC%8Fetc%EF%BC%8Fpasswd
+
+# 5. JSON unicode escape for WAF bypass
+{"search":"\\u003cscript\\u003ealert(1)\\u003c/script\\u003e"}</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Double encoding</strong> は WAF bypass の第一手。パスとパラメータ両方で試す。</li>
+                    <li><strong>Base64 は暗号ではない</strong>。Cookie やトークンが Base64 なら必ずデコードして中身を確認。</li>
+                    <li><strong>Unicode normalization (NFKC)</strong> でフィルタバイパス。Fullwidth 文字は強力。</li>
+                    <li><strong>Parser differential</strong>: URL parser の実装差がSSRF, Path Traversal に直結。</li>
+                    <li><strong>Content-Type 変更</strong>で WAF 検査ロジックが変わる。JSON→form, form→multipart を試す。</li>
+                    <li><strong>Context matters</strong>: HTML/JS/URL の各コンテキストでエンコーディングの解釈が異なる。</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="03-enc" onclick="toggleComplete('03-enc')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="02-authentication.html">&larr; 前: Authentication & Session</a>
+            <a href="04-crypto-basics.html">次: Crypto Basics &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

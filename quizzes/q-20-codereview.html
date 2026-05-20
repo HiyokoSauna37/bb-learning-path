@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Code Review Method - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; Security Code Review
+        </div>
+        <div class="page-header">
+            <h1>Security Code Review Method</h1>
+            <p class="subtitle">5 questions - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../modules/20-code-review-method.html">&larr; Module に戻る</a>
+            <a href="../quiz.html">Quiz 一覧 &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-20-codereview', [
+        {
+            question: "バグバウンティにおけるセキュリティコードレビューで最もROI（投資対効果）が高いアプローチはどれか？",
+            options: [
+                "Source-to-Sink（入力から危険な関数までデータフローを追跡）",
+                "Sink-to-Source（危険な関数を先に見つけ、ユーザー入力が到達するか逆方向に追跡）",
+                "Feature-based（機能ごとに関連コードを通読）",
+                "Line-by-line（ファイルを上から順に全行確認）"
+            ],
+            answer: 1,
+            explanation: "Sink-to-Source（危険関数→入力元の追跡）が最高ROI。理由：1)危険なsinkの数は有限でgrep可能、2)sinkがなければ脆弱性は存在しない、3)大きなコードベースでも効率的に絞り込める。Source-to-Sinkは入力経路が多すぎて非効率。Feature-basedはビジネスロジックバグに強いがsinkベースのバグには遠回り。"
+        },
+        {
+            question: "セキュリティコードレビューにおける「シンク(sink)」の正確な定義はどれか？",
+            options: [
+                "ユーザーからの入力を受け取る関数（入口点）",
+                "外部データを処理する際に危険な動作を行う関数（exec, query, innerHTML等）",
+                "認証チェックを行うミドルウェア関数",
+                "エラーハンドリングを行うcatch/except/rescueブロック"
+            ],
+            answer: 1,
+            explanation: "シンクはデータフローの「排出口」であり、データが最終的に処理される危険な関数。例：exec/system(コマンド実行)、query/execute(SQL実行)、innerHTML/dangerouslySetInnerHTML(HTML注入)、open/readFile(ファイル操作)、redirect(オープンリダイレクト)。入力を受け取る関数は「ソース(source)」と呼ばれる対概念。"
+        },
+        {
+            question: "OSSリポジトリをクローンした直後、セキュリティレビューの最初のステップとして最も有効なのは何か？",
+            options: [
+                "README.mdを読んで機能を理解する",
+                "package.json/requirements.txt/go.mod等を確認してフレームワークと依存関係を把握する",
+                "git logで最近のセキュリティ修正コミットを探す",
+                "テストファイルを確認してアプリの動作を理解する"
+            ],
+            answer: 1,
+            explanation: "依存関係/フレームワークの把握が最初のステップ。理由：1)フレームワーク固有のsinkパターンが分かる（Express→app.get、Django→views.py）、2)既知の脆弱な依存パッケージを即座に発見できる、3)アーキテクチャ（REST API/GraphQL/SSR等）が把握でき以降のレビュー方針が決まる。READMEは概要把握に有用だが技術的な即効性は低い。"
+        },
+        {
+            question: "Node.jsアプリケーションでコマンドインジェクションの可能性を検索するための最も効果的なgrepパターンはどれか？",
+            options: [
+                "require\\(.*child_process",
+                "exec\\(|execSync\\(",
+                "system\\(|popen\\(",
+                "eval\\(|Function\\("
+            ],
+            answer: 1,
+            explanation: "exec()/execSync()はchild_processモジュールのシェルコマンド実行関数で、Node.jsにおけるコマンドインジェクションの主要なsink。require('child_process')だけではimportの存在しか分からず、実際のsink使用箇所を特定できない。system/popenはPHP/Python/Rubyの関数。eval/Functionはコード実行のsinkだがコマンドインジェクションとは別。"
+        },
+        {
+            question: "Feature-based（機能ベース）のコードレビューアプローチがSink-to-Sourceより優れているのはどのような場合か？",
+            options: [
+                "大規模なコードベースで効率的に脆弱性を見つけたい場合",
+                "ビジネスロジックの脆弱性（権限昇格、レースコンディション等）を見つけたい場合",
+                "既知のCVE/脆弱性パターンの横展開を確認したい場合",
+                "コードの品質やメンテナンス性を評価したい場合"
+            ],
+            answer: 1,
+            explanation: "Feature-basedは機能全体の文脈を理解した上でレビューするため、grepでは見つからないビジネスロジックバグに強い。例：決済フローのレースコンディション、権限チェックの論理的な漏れ、ワークフローの状態遷移の不備等。これらは特定のsinkに依存せず、複数コンポーネントの相互作用から生じるため、機能を俯瞰的に理解する必要がある。"
+        }
+    ]);
+    </script>
+</body>
+</html>

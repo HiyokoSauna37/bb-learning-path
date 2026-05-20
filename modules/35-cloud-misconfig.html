@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Misconfiguration - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn {
+            display: inline-block;
+            padding: 0.5rem 1.2rem;
+            border: 1px solid var(--green);
+            border-radius: 6px;
+            background: transparent;
+            color: var(--green);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .complete-btn:hover { background: var(--green); color: #000; }
+        .complete-btn.is-complete { background: var(--green); color: #000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 3: Recon &amp; Blackbox &gt; Cloud Misconfiguration
+        </div>
+
+        <div class="page-header">
+            <h1>Cloud Misconfiguration</h1>
+            <p class="subtitle">
+                AWS, GCP, Azure -- クラウドサービスの設定ミスは攻撃者にとって最も低コストで
+                高インパクトな attack surface。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-practice">Practice</span>
+            </div>
+        </div>
+
+        <!-- Section: AWS -->
+        <div class="section">
+            <h2>AWS Misconfiguration</h2>
+
+            <h3>S3 Bucket Enumeration &amp; Misconfigured ACLs</h3>
+<pre><code># Bucket 名の推測
+# パターン: {company}-{env}, {company}-{service}, {company}-backup
+aws s3 ls s3://target-dev --no-sign-request
+aws s3 ls s3://target-staging --no-sign-request
+aws s3 ls s3://target-backup --no-sign-request
+
+# S3Scanner で自動列挙
+s3scanner scan --bucket-file bucket_names.txt
+
+# ACL チェック
+aws s3api get-bucket-acl --bucket target-bucket --no-sign-request
+# "AllUsers" に READ/WRITE が付いていたら misconfiguration
+
+# オブジェクト一覧
+aws s3 ls s3://target-bucket/ --no-sign-request --recursive
+
+# 書き込みテスト (許可されている場合のみ)
+echo "test" > /tmp/test.txt
+aws s3 cp /tmp/test.txt s3://target-bucket/test.txt --no-sign-request</code></pre>
+
+            <h3>EC2 Metadata Service (IMDS)</h3>
+<pre><code># IMDSv1 (SSRF で狙われる)
+curl http://169.254.169.254/latest/meta-data/
+curl http://169.254.169.254/latest/meta-data/iam/security-credentials/
+
+# IMDSv2 (Token 必要 - SSRF での悪用が困難)
+TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+curl -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/
+
+# SSRF 経由で IMDSv1 にアクセスできれば IAM credentials が取得可能
+# → AWS アカウント内の他リソースへの lateral movement</code></pre>
+
+            <h3>Lambda Function URL Exposure</h3>
+<pre><code># Lambda Function URL は認証なしで公開される場合がある
+# パターン: https://{id}.lambda-url.{region}.on.aws/
+# Content Discovery で発見、または DNS record から
+
+# Cognito Misconfiguration
+# Identity Pool が unauthenticated access を許可
+aws cognito-identity get-id --identity-pool-id {region}:{pool-id}
+aws cognito-identity get-credentials-for-identity --identity-id {id}
+# → Temporary AWS credentials が取得できる</code></pre>
+        </div>
+
+        <!-- Section: GCP -->
+        <div class="section">
+            <h2>GCP Misconfiguration</h2>
+
+            <h3>Firebase Rules (Open Read/Write)</h3>
+<pre><code># Firebase Realtime Database
+curl https://TARGET.firebaseio.com/.json
+# データベース全体が読める場合 = misconfiguration
+
+# 書き込みテスト
+curl -X PUT https://TARGET.firebaseio.com/test.json \
+  -d '{"hacked":"true"}'
+
+# Firestore rules チェック
+# /.well-known/firebase/rules.json (公開されていることがある)
+
+# firebase-enum で自動チェック
+python3 firebase-enum.py -p TARGET</code></pre>
+
+            <h3>Cloud Storage Bucket</h3>
+<pre><code># GCS bucket listing
+curl https://storage.googleapis.com/TARGET-bucket/
+curl https://storage.googleapis.com/storage/v1/b/TARGET-bucket/o
+
+# gsutil (認証なし)
+gsutil ls gs://target-bucket/
+gsutil cp gs://target-bucket/sensitive-file.txt ./</code></pre>
+
+            <h3>Cloud Function Invocation</h3>
+<pre><code># 認証なしで呼び出せる Cloud Function
+curl https://{region}-{project}.cloudfunctions.net/{function-name}
+
+# allUsers に invoker 権限が付いている場合
+# → 意図しない内部機能が外部から実行可能</code></pre>
+        </div>
+
+        <!-- Section: Azure -->
+        <div class="section">
+            <h2>Azure Misconfiguration</h2>
+
+            <h3>Blob Storage Enumeration</h3>
+<pre><code># Azure Blob Storage listing
+curl "https://TARGET.blob.core.windows.net/CONTAINER?restype=container&comp=list"
+
+# パブリックアクセスレベル
+# Container: 全 blob が匿名アクセス可能
+# Blob: URL を知っていれば匿名アクセス可能
+
+# cloud_enum で自動列挙
+python3 cloud_enum.py -k target</code></pre>
+
+            <h3>App Service Source Code Exposure</h3>
+<pre><code># .git 露出
+curl https://target.azurewebsites.net/.git/config
+
+# Kudu (SCM) サイト
+curl https://target.scm.azurewebsites.net/
+
+# Web deploy backup
+curl https://target.azurewebsites.net/web.config</code></pre>
+        </div>
+
+        <!-- Section: Subdomain Takeover via Cloud -->
+        <div class="section">
+            <h2>Subdomain Takeover via Cloud Services</h2>
+            <p>
+                Cloud サービスを指す DNS レコードが残ったまま、サービスが削除された場合に
+                攻撃者が claim できる。
+            </p>
+
+            <table style="width:100%; border-collapse:collapse; margin:1rem 0;">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <th style="text-align:left; padding:0.5rem;">Service</th>
+                        <th style="text-align:left; padding:0.5rem;">CNAME Pattern</th>
+                        <th style="text-align:left; padding:0.5rem;">Takeover Signal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;">AWS S3</td>
+                        <td style="padding:0.5rem;"><code>*.s3.amazonaws.com</code></td>
+                        <td style="padding:0.5rem;">NoSuchBucket</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;">Azure</td>
+                        <td style="padding:0.5rem;"><code>*.azurewebsites.net</code></td>
+                        <td style="padding:0.5rem;">404 + default page</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;">Heroku</td>
+                        <td style="padding:0.5rem;"><code>*.herokuapp.com</code></td>
+                        <td style="padding:0.5rem;">No such app</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;">GitHub Pages</td>
+                        <td style="padding:0.5rem;"><code>*.github.io</code></td>
+                        <td style="padding:0.5rem;">404 There isn't a GitHub Pages site here</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:0.5rem;">Fastly</td>
+                        <td style="padding:0.5rem;"><code>*.fastly-edge.com</code></td>
+                        <td style="padding:0.5rem;">Fastly error: unknown domain</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0.5rem;">Shopify</td>
+                        <td style="padding:0.5rem;"><code>*.myshopify.com</code></td>
+                        <td style="padding:0.5rem;">Sorry, this shop is currently unavailable</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="callout warning">
+                <div class="callout-title">Fastly Takeover の False Positive に注意</div>
+                <p>
+                    CNAME が *.fastly-edge.com を指していても、それだけでは takeover 可能とは限らない。
+                    <strong>vulnerable subdomain 自身に curl して "unknown domain" が返るか</strong>を確認する必要がある。
+                    CNAME 先が存在するのにドメインがそのサービスに登録されていない、というケースのみ takeover が成立する。
+                </p>
+            </div>
+
+<pre><code># 検出ツール
+# nuclei takeover templates
+cat subdomains.txt | nuclei -t takeovers/
+
+# can-i-take-over-xyz の fingerprint で手動確認
+dig CNAME target-sub.target.com
+curl -I target-sub.target.com
+# レスポンスの fingerprint を can-i-take-over-xyz と照合</code></pre>
+        </div>
+
+        <!-- Section: Tools -->
+        <div class="section">
+            <h2>Tools Summary</h2>
+            <ul>
+                <li><strong>cloud_enum</strong> — マルチクラウド対応のリソース列挙 (S3, GCS, Azure Blob)</li>
+                <li><strong>S3Scanner</strong> — S3 bucket の permissions チェック特化</li>
+                <li><strong>firebase-enum</strong> — Firebase project の misconfiguration スキャン</li>
+                <li><strong>ScoutSuite</strong> — AWS/GCP/Azure の包括的な security audit</li>
+                <li><strong>Prowler</strong> — AWS security best practices チェック</li>
+                <li><strong>nuclei</strong> — takeover / exposure テンプレート</li>
+            </ul>
+        </div>
+
+        <!-- Section: Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>S3 bucket は最も一般的な misconfiguration</strong> — 名前を推測して --no-sign-request で試す</li>
+                    <li><strong>IMDSv1 + SSRF = 完全なアカウント侵害</strong> — SSRF を見つけたら必ず IMDS を試す</li>
+                    <li><strong>Firebase の open rules は致命的</strong> — .json エンドポイントで全データ読み出し</li>
+                    <li><strong>Subdomain takeover は Cloud service 経由が最多</strong> — dangling CNAME を継続監視</li>
+                    <li><strong>False positive に注意</strong> — takeover を主張する前に実際に claim 可能か確認する</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Section: References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://github.com/initstring/cloud_enum" target="_blank">cloud_enum - GitHub</a></li>
+                <li><a href="https://github.com/sa7mon/S3Scanner" target="_blank">S3Scanner - GitHub</a></li>
+                <li><a href="https://github.com/EdOverflow/can-i-take-over-xyz" target="_blank">can-i-take-over-xyz - GitHub</a></li>
+                <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html" target="_blank">AWS IMDS Documentation</a></li>
+                <li><a href="https://firebase.google.com/docs/rules" target="_blank">Firebase Security Rules</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete button -->
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="35-cloud" onclick="toggleComplete('35-cloud')">Mark Complete</button>
+        </div>
+
+        <!-- Navigation -->
+        <div class="page-nav">
+            <a href="34-mobile-api.html">&larr; 前: Mobile API Testing</a>
+            <a href="36-automation.html">次: Automation &amp; Custom Tools &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

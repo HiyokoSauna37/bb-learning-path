@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auth Middleware Bypass - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; Auth Middleware Bypass
+        </div>
+        <div class="page-header">
+            <h1>Auth Middleware Bypass</h1>
+            <p class="subtitle">5 questions - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../modules/24-auth-middleware.html">&larr; Module に戻る</a>
+            <a href="../quiz.html">Quiz 一覧 &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-24-middleware', [
+        {
+            question: "huntr.com（OSS脆弱性バウンティ）で最も頻繁に報告される認証ミドルウェアバイパスのパターンはどれか？",
+            options: [
+                "JWT署名の検証不備",
+                "ホワイトリスト/許可リストのパスマッチングバイパス",
+                "セッションの固定化（Session Fixation）",
+                "OAuth2トークンのスコープ検証不備"
+            ],
+            answer: 1,
+            explanation: "huntrで最も多いのはホワイトリスト/許可リストのバイパス。開発者がpublic APIパスを認証除外リストに追加する際、startsWith/includes等の緩いマッチングを使うことで、攻撃者が/api/public/../admin等のパストラバーサルや/api/publicXXX等のプレフィックスマッチ悪用で認証をバイパスできる。Flowise等で繰り返し発見されるパターン。"
+        },
+        {
+            question: "認証ミドルウェアがパスの正規化(normalization)前にチェックを行う場合、どのような攻撃が可能になるか？",
+            options: [
+                "SQLインジェクション（パスにSQLペイロードを含める）",
+                "パストラバーサルによる認証バイパス（/public/../admin が /public/* にマッチして認証スキップ後、/admin に正規化される）",
+                "HTTPリクエストスマグリング",
+                "ディレクトリリスティングによる情報漏洩"
+            ],
+            answer: 1,
+            explanation: "ミドルウェアが正規化前のパスで認証判定→フレームワークが正規化後のパスでルーティング、という順序の不一致が脆弱性を生む。例：/api/public/../admin/users はミドルウェアで/api/public/*にマッチ→認証スキップ→正規化で/api/admin/usersにルーティング。これはTOCTOUの一種であり、パスの「見え方」と「解釈」の差異を悪用する。"
+        },
+        {
+            question: "アプリケーションで認証ミドルウェアの適用漏れを検出するための効率的な方法はどれか？",
+            options: [
+                "全エンドポイントに認証なしでリクエストを送り、200が返るか確認する",
+                "全ルート定義を列挙し、認証ミドルウェア名でgrepして適用されていないルートのギャップを見つける",
+                "アプリケーションのドキュメントで「認証不要」と記載されたAPIを確認する",
+                "ソースコード全体を上から下まで通読する"
+            ],
+            answer: 1,
+            explanation: "効率的な方法は：1)ルート定義ファイルから全エンドポイントをリスト化、2)認証ミドルウェア名(例：authMiddleware, requireAuth, isAuthenticated)でgrepして適用箇所を特定、3)差分（ギャップ）=ミドルウェア未適用のルートを発見。ブラックボックスの全パターンテストは非効率。ドキュメントは実装と乖離していることが多い。"
+        },
+        {
+            question: "FlowiseのWHITELIST_URLS脆弱性パターンが危険な理由として最も本質的なのはどれか？",
+            options: [
+                "環境変数で設定するため設定ミスが起きやすい",
+                "ホワイトリストに含まれるパスへのリクエストが認証チェックを完全にスキップし、機密エンドポイントへの未認証アクセスが可能になる",
+                "ホワイトリストのデフォルト値が広すぎる",
+                "ホワイトリストの変更にサーバー再起動が必要"
+            ],
+            answer: 1,
+            explanation: "WHITELIST_URLSパターンの本質的な危険性は、パスマッチングロジックの不備により、認証が必要なエンドポイント（API credentials取得、内部設定、ユーザーデータ等）への未認証アクセスを許可してしまうこと。プレフィックスマッチの悪用、パストラバーサル、大文字小文字の不一致等、複数のバイパス手法が存在する。"
+        },
+        {
+            question: "あるルートで認証ミドルウェアの適用漏れを1つ発見した後、次にすべき最も効果的なアクションはどれか？",
+            options: [
+                "直ちにバグを報告する",
+                "同じパターン（兄弟/sibling）を探す：同じファイルや同じ開発者が書いた他のルートに同様の漏れがないか確認する",
+                "そのルートからの権限昇格チェーンを探す",
+                "パッチを書いて修正PRを提出する"
+            ],
+            answer: 1,
+            explanation: "認証漏れは「同じ開発者の同じパターン」で繰り返される傾向が強い。1つ見つけたら同じファイル内、同じモジュール、同じコーディングスタイルの他のルートを即座にチェックすべき。Flowise等では1つの報告から+6件の兄弟バグが見つかった例がある。これはBBにおけるvariant hunting戦略の基本であり、効率的に複数の報告を生成できる。"
+        }
+    ]);
+    </script>
+</body>
+</html>

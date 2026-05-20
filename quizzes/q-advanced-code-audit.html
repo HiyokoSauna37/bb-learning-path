@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Audit Deep Dive (上級) - Quiz</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; <a href="../quiz.html">Quiz</a> &gt; Code Audit Deep Dive (上級)
+        </div>
+        <div class="page-header">
+            <h1>Code Audit Deep Dive (上級)</h1>
+            <p class="subtitle">5 questions - 上級 - 80%以上で合格</p>
+        </div>
+        <div id="quiz-container"></div>
+        <div class="page-nav" style="margin-top:2rem;">
+            <a href="../quiz.html">&larr; Quiz 一覧</a>
+        </div>
+    </div>
+    <script src="../assets/quiz.js"></script>
+    <script>
+    initQuiz('q-adv-code', [
+        {
+            question: "以下のExpressルートの脆弱性クラスと根本原因は？\n\napp.get('/api/users/:id', auth, (req, res) => {\n  db.query('SELECT * FROM users WHERE id = ' + req.params.id)\n})",
+            options: [
+                "認証バイパス - authミドルウェアがreq.params.idを検証していない可能性",
+                "SQL Injection - authミドルウェアの有無に関係なく、文字列連結によるクエリ構築が脆弱",
+                "IDOR - 認証済みユーザーが他のユーザーIDを指定してデータを取得できる",
+                "情報漏洩 - SELECT *が不要なカラムも返している"
+            ],
+            answer: 1,
+            explanation: "authミドルウェアで認証チェックがあっても、SQL文の構築に文字列連結を使っている時点でSQL Injectionが成立する。認証済みの攻撃者がid=1 OR 1=1等を送信すれば全レコード取得可能。修正はパラメータ化クエリ（Prepared Statement）: db.query('SELECT * FROM users WHERE id = ?', [req.params.id])。IDORも副次的に存在するが、根本的な脆弱性クラスはSQLi。"
+        },
+        {
+            question: "以下のPythonコードの脆弱性の重大度と影響は？\n\nimport yaml\ndata = yaml.load(user_input)",
+            options: [
+                "Low - YAML解析エラーによるDoSの可能性",
+                "Medium - 意図しないデータ型の注入（型混乱）",
+                "Critical - yaml.loadはデフォルトでPythonオブジェクトのデシリアライゼーションを許可し、RCEが可能",
+                "High - 大量のYAMLデータによるメモリ枯渇"
+            ],
+            answer: 2,
+            explanation: "PyYAMLのyaml.load()はデフォルトでFullLoaderまたはUnsafeLoader（バージョンによる）を使用し、!!python/object/apply:os.system ['whoami']のようなタグで任意コード実行が可能。yaml.safe_load()を使用すれば基本的なデータ型のみに制限される。CVE-2017-18342等として知られる古典的だが今も頻出する脆弱性。"
+        },
+        {
+            question: "以下のGoコードはパストラバーサルに対して安全か？\n\nfunc handler(w http.ResponseWriter, r *http.Request) {\n  filename := r.URL.Query().Get(\"file\")\n  path := filepath.Join(\"/uploads\", filename)\n  http.ServeFile(w, r, path)\n}",
+            options: [
+                "安全 - filepath.Joinが../を正規化して/uploadsの外に出ることを防ぐ",
+                "安全ではない - filepath.Joinは../を解決するが、シンボリックリンク経由の脱出を防げない",
+                "安全ではない - filepath.Joinは../を解決するが、結果が/uploadsプレフィックスで始まるかの検証がない",
+                "安全 - http.ServeFileが内部的にパスの検証を行う"
+            ],
+            answer: 2,
+            explanation: "filepath.Join(\"/uploads\", \"../../etc/passwd\")は\"/etc/passwd\"に正規化される。Joinは相対パスの解決は行うが、結果が期待するディレクトリ配下であることは保証しない。修正にはfilepath.Join後にstrings.HasPrefix(path, \"/uploads/\")を検証するか、filepath.Rel()で相対パスに..が含まれないことを確認する必要がある。http.ServeFileもパスの安全性検証は行わない。"
+        },
+        {
+            question: "以下のNode.jsコードの脆弱性クラスは？\n\nconst _ = require('lodash');\napp.post('/config', (req, res) => {\n  const obj = {};\n  _.merge(obj, JSON.parse(req.body));\n  // objを使った処理...\n});",
+            options: [
+                "コマンドインジェクション - JSON内にコマンドを埋め込める",
+                "Prototype Pollution - JSON内の__proto__キーでObjectのプロトタイプを汚染できる",
+                "NoSQL Injection - JSONオブジェクトの演算子で条件を改変できる",
+                "Server-Side Template Injection - テンプレートエンジンに汚染データが到達する"
+            ],
+            answer: 1,
+            explanation: "lodashの_.merge()は再帰的にオブジェクトをマージするため、入力に{\"__proto__\": {\"isAdmin\": true}}を含めるとObject.prototypeが汚染される。これにより後続の全オブジェクトでobj.isAdmin === trueとなる。影響はアプリケーション依存でauth bypassからRCEまで。修正: Object.create(null)の使用、__proto__/constructor/prototypeキーのフィルタ、lodash最新版でのsafe merge使用。"
+        },
+        {
+            question: "以下のJWT検証コードの影響は？\n\nconst decoded = jwt.verify(token, secret, {\n  algorithms: ['HS256', 'none']\n});",
+            options: [
+                "Low - 'none'アルゴリズムは署名なしだが、ペイロードの整合性は保たれる",
+                "Critical - 攻撃者はalgorithm: 'none'で署名なしのtokenを作成し、任意のペイロードを偽造できる",
+                "Medium - secretが漏洩した場合のみ悪用可能",
+                "High - HS256の鍵長が短い場合にブルートフォースが可能になる"
+            ],
+            answer: 1,
+            explanation: "algorithmsに'none'を含めると、攻撃者はヘッダーを{\"alg\":\"none\"}に設定し、署名部分を空にしたJWTを送信できる。サーバーはこれを有効と判断するため、任意のユーザーID・権限を持つtokenを偽造できる。secretの知識は不要。これはJWT実装の古典的な脆弱性で、algorithms配列に'none'を含めてはならない。修正: algorithms: ['HS256']のみに限定。"
+        }
+    ]);
+    </script>
+</body>
+</html>

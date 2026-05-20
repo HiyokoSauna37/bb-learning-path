@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signal & Reputation Management - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .signal-table td { text-align:center; }
+        .signal-table td:first-child { text-align:left; }
+        .strategy-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1.2rem; margin-bottom:1rem; }
+        .strategy-card h4 { color:var(--accent); margin-bottom:0.5rem; }
+        .danger-zone { background:var(--red-dim); border:1px solid var(--red); border-radius:8px; padding:1rem; margin:1rem 0; }
+        .safe-zone { background:var(--green-dim); border:1px solid var(--green); border-radius:8px; padding:1rem; margin:1rem 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 5: Operations &gt; Signal &amp; Reputation Management
+        </div>
+
+        <div class="page-header">
+            <h1>Signal &amp; Reputation Management</h1>
+            <p class="subtitle">
+                HackerOne Signal は BB キャリアの生命線。一度下げると回復に時間がかかる。
+                Quality-first approach で長期的に Signal を積み上げる戦略。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+            </div>
+        </div>
+
+        <!-- Signal Calculation -->
+        <div class="section">
+            <h2>HackerOne Signal 計算</h2>
+            <p>Signal は過去のレポート結果から算出される品質スコア。Default = 0.0、Maximum = 7.0。</p>
+
+            <table class="signal-table">
+                <thead><tr><th>Report Result</th><th>Signal Impact</th><th>備考</th></tr></thead>
+                <tbody>
+                    <tr><td>Resolved (Bounty paid)</td><td style="color:var(--green);">+7</td><td>最大の positive signal</td></tr>
+                    <tr><td>Resolved (No bounty)</td><td style="color:var(--green);">+7</td><td>VDP でも同じ</td></tr>
+                    <tr><td>Triaged</td><td style="color:var(--green);">+5</td><td>Bounty 前でも positive</td></tr>
+                    <tr><td>Informative</td><td style="color:var(--text-muted);">0</td><td>Neutral (害はない)</td></tr>
+                    <tr><td>Duplicate</td><td style="color:var(--text-muted);">Excluded</td><td>Signal 計算から除外 (プラスもマイナスもなし)。Reputation に early +2 / late -5 の別計算あり</td></tr>
+                    <tr><td>Not Applicable (N/A)</td><td style="color:var(--red);">-5</td><td>大きなダメージ</td></tr>
+                    <tr><td>Spam</td><td style="color:var(--red);">-10</td><td>致命的ダメージ</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Key Insight</h3>
+            <ul>
+                <li><strong>Dup は Signal に影響しない。</strong>恐れるべきは N/A と Spam</li>
+                <li>Signal = (sum of impacts) / (number of counted reports)。Dup は分母にも分子にも入らない</li>
+                <li>1件の N/A を打ち消すには Resolved が 1件必要</li>
+                <li>1件の Spam を打ち消すには Resolved が 2件弱必要</li>
+            </ul>
+        </div>
+
+        <!-- Reputation Building -->
+        <div class="section">
+            <h2>Reputation Building 戦略</h2>
+
+            <div class="strategy-card">
+                <h4>Phase 1: Signal > 1.0 を確保</h4>
+                <ul>
+                    <li>最初の数件は確実に Triaged/Resolved になるものだけ submit</li>
+                    <li>Low-competition program (新しい program, response time が短い)</li>
+                    <li>huntr/GHSA で verified な finding を蓄積（Signal には直接影響しないが実力を証明）</li>
+                    <li>「怪しいけど確信がない」ものは submit しない</li>
+                </ul>
+            </div>
+
+            <div class="strategy-card">
+                <h4>Phase 2: Private Invite を獲得</h4>
+                <ul>
+                    <li>Signal > 1.0 + consistent activity で invite が来始める</li>
+                    <li>Private program は参加者が限定されるため dup 率が低い</li>
+                    <li>Bounty range も public program より高い傾向</li>
+                    <li>一度 invite されたら response time を意識（SLA 違反で invite revoke あり）</li>
+                </ul>
+            </div>
+
+            <div class="strategy-card">
+                <h4>Phase 3: 安定運用</h4>
+                <ul>
+                    <li>Quality-first を維持。1件の Critical > 10件の Informative</li>
+                    <li>Signal を下げないために N/A リスクのある報告は見送る</li>
+                    <li>新しい program が launch されたら早期参入（competition が低い）</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Avoid Signal Damage -->
+        <div class="section">
+            <h2>Signal ダメージの回避</h2>
+
+            <div class="danger-zone">
+                <h4>N/A になりやすいパターン</h4>
+                <ul>
+                    <li>Scope 外のアセットへの報告</li>
+                    <li>「脆弱性ではないが informational」な報告（best practice 違反等）</li>
+                    <li>既に vendor が「Won't Fix」と決めている known issue</li>
+                    <li>Design intent として意図された behavior</li>
+                    <li>Impact が実証されていない speculative report</li>
+                </ul>
+            </div>
+
+            <div class="safe-zone">
+                <h4>Submit して安全な条件</h4>
+                <ul>
+                    <li>PoC で impact を完全に実証済み</li>
+                    <li>Scope 内のアセットであることを確認済み</li>
+                    <li>Dup check 3軸を通過</li>
+                    <li>bb-aislop-gate scan が PASS</li>
+                    <li>4-axis pre-submit audit を通過</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Quality over Quantity -->
+        <div class="section">
+            <h2>Quality over Quantity</h2>
+            <p>BB 初心者がやりがちな mistake: 「数を打てば当たる」戦略。実際には逆効果。</p>
+
+            <table>
+                <thead><tr><th>戦略</th><th>結果</th><th>Signal 影響</th></tr></thead>
+                <tbody>
+                    <tr><td>10件 submit (7 N/A, 2 Dup, 1 Resolved)</td><td>$500 bounty</td><td>Signal = (7 + 7*(-5)) / 8 = <strong>-3.5</strong></td></tr>
+                    <tr><td>2件 submit (1 Resolved, 1 Dup)</td><td>$500 bounty</td><td>Signal = 7/1 = <strong>7.0</strong></td></tr>
+                </tbody>
+            </table>
+            <p>同じ bounty 額でも Signal が天と地ほど違う。Signal が低いと private invite が来なくなり、long-term revenue が激減する。</p>
+
+            <h3>Program 選択 for Signal Building</h3>
+            <ul>
+                <li><strong>Response time が短い program</strong> &mdash; Triaged が早く Signal に反映</li>
+                <li><strong>Scope が明確な program</strong> &mdash; N/A risk が低い</li>
+                <li><strong>新 launch program</strong> &mdash; Competition が低く、easy win が残っている</li>
+                <li><strong>VDP (Vulnerability Disclosure Program)</strong> &mdash; Bounty はないが Resolved = +7 signal</li>
+            </ul>
+        </div>
+
+        <!-- Practical Tips -->
+        <div class="section">
+            <h2>実践 Tips</h2>
+            <ul>
+                <li>Submit 前に「これが N/A で返ってきたら納得するか？」と自問</li>
+                <li>確信が 80% 未満なら submit しない</li>
+                <li>Triage team のコメントを注意深く読む &mdash; 次回の判断基準になる</li>
+                <li>Resolved 後に disclosure request を出す &mdash; 公開レポートは portfolio になる</li>
+                <li>他の hunter の disclosed report を読んで基準を学ぶ</li>
+            </ul>
+        </div>
+
+        <!-- Signal Recovery -->
+        <div class="section">
+            <h2>Signal Recovery Strategy</h2>
+            <p>Signal が下がってしまった場合の回復方法:</p>
+
+            <h3>短期回復 (1-2週間)</h3>
+            <ul>
+                <li>VDP (Vulnerability Disclosure Program) で確実な finding を submit → Resolved = +7</li>
+                <li>Response time が短い program を選ぶ（Triaged = +5 が早く反映）</li>
+                <li>huntr で verified な finding → Signal 対象外だが実力証明に使える</li>
+            </ul>
+
+            <h3>中期安定化 (1-3ヶ月)</h3>
+            <ul>
+                <li>Submit 頻度を下げて quality を上げる</li>
+                <li>bb-submit-gate の 8 gates を厳格に適用（1つでも FAIL なら submit しない）</li>
+                <li>N/A risk のある報告は完全に見送る</li>
+                <li>Signal > 1.0 に回復するまで conservative mode を維持</li>
+            </ul>
+
+            <h3>Signal 計算シミュレーション</h3>
+            <table>
+                <thead><tr><th>現在の状態</th><th>必要な Resolved 数</th><th>回復期間目安</th></tr></thead>
+                <tbody>
+                    <tr><td>Signal = -2.0 (N/A 2件)</td><td>Resolved 3件で Signal > 1.0</td><td>2-4週間</td></tr>
+                    <tr><td>Signal = -5.0 (Spam 1件)</td><td>Resolved 4件で Signal > 1.0</td><td>4-8週間</td></tr>
+                    <tr><td>Signal = 0.0 (新規)</td><td>Resolved 1件で Signal = 7.0</td><td>1-2週間</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Navigation -->
+        <div class="section" style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border); padding-top:1.5rem;">
+            <a href="54-ai-slop.html">&larr; Prev: AI Slop Avoidance</a>
+            <button class="complete-btn" data-module-id="55-signal" onclick="toggleComplete('55-signal')">Mark Complete</button>
+            <a href="56-tax-legal.html">Next: Tax &amp; Legal &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

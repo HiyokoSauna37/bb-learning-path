@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Business Logic Flaws - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 1: Core Vulnerabilities &gt; Business Logic Flaws
+        </div>
+
+        <div class="page-header">
+            <h1>Business Logic Flaws</h1>
+            <p class="subtitle">
+                技術的な脆弱性ではなく、アプリケーションの「ビジネスロジック」の設計ミスを悪用する。
+                スキャナでは検出不可能。人間の創造的思考が最も活きる領域。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <!-- 原理 -->
+        <div class="section">
+            <h2>原理と仕組み</h2>
+            <p>
+                Business Logic Flaw は、アプリケーションの仕様・ワークフローの「暗黙の前提」を破ることで
+                本来不可能な操作を実現する。SQLi や XSS のような技術的なペイロードは不要で、
+                正規のリクエストの<strong>順序・値・タイミング</strong>を操作する。
+            </p>
+
+            <div class="callout">
+                <div class="callout-title">なぜ Logic Bug は見逃されるのか</div>
+                <ul>
+                    <li>自動スキャナでは検出不可能（正規のリクエストしか使わないため）</li>
+                    <li>開発者が「ユーザーはこう使うはず」という前提で設計</li>
+                    <li>テストケースがハッピーパスに偏りがち</li>
+                    <li>複数ステップにまたがる攻撃は QA でも見逃しやすい</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 種類 -->
+        <div class="section">
+            <h2>種類と分類</h2>
+
+            <h3>1. Race Condition (競合状態)</h3>
+            <p>
+                同一リソースへの並列アクセスにより、チェックと操作の間に不整合が発生する(TOCTOU)。
+                2023年に PortSwigger の James Kettle が "single-packet attack" を発表し、
+                HTTP/2 の single connection で複数リクエストを同時送信する手法が確立された。
+            </p>
+
+            <div class="mermaid">
+flowchart TD
+    A[Turbo Intruder: 20リクエスト準備] --> B[HTTP/2 single connection確立]
+    B --> C[gate='race1' でキュー]
+    C --> D[openGate: 1パケットで全送信]
+    D --> E{サーバー処理}
+    E -->|並列到着| F[Req1: 残高チェック OK]
+    E -->|並列到着| G[Req2: 残高チェック OK]
+    E -->|並列到着| H[Req3: 残高チェック OK]
+    F --> I[引き落とし実行]
+    G --> J[引き落とし実行]
+    H --> K[引き落とし実行]
+    I --> L[残高が負に = Race成功]
+            </div>
+<pre><code>// 典型例: クーポン二重適用
+// 正常フロー: カートにクーポン適用 → 残高チェック → 注文確定
+// 攻撃: 同じクーポンを並列で複数回適用
+
+// Single-packet attack (Turbo Intruder)
+def queueRequests(target, wordlists):
+    engine = RequestEngine(endpoint=target.endpoint,
+                          concurrentConnections=1,
+                          engine=Engine.HTTP2)
+
+    for i in range(20):
+        engine.queue(target.req, gate='race1')
+
+    engine.openGate('race1')  # 全リクエストを1パケットで同時送信
+
+// Limit Overrun (一般的なパターン):
+// - クーポン/割引の複数回適用
+// - 投票/いいね の複数回実行
+// - 残高チェック→引き落としの間の二重引き出し
+// - 招待コードの複数回使用</code></pre>
+
+            <h3>2. Price / Quantity Manipulation</h3>
+<pre><code>// 負の数量
+POST /cart/update
+{"item_id": 123, "quantity": -1}
+// 合計金額がマイナスになる → 返金?
+
+// 価格改ざん (クライアント側で価格を送信している場合)
+POST /checkout
+{"item_id": 123, "price": 0.01, "quantity": 1}
+
+// 通貨混同
+// USD で表示された商品を JPY レートで購入
+POST /purchase
+{"amount": 100, "currency": "JPY"}  // $100 の商品を 100 JPY で購入
+
+// Integer Overflow
+{"quantity": 2147483647}  // INT_MAX → 合計金額がオーバーフローで負に</code></pre>
+
+            <h3>3. Coupon / Discount Abuse</h3>
+<pre><code>// クーポン重複適用
+POST /apply-coupon (coupon=SAVE50)
+POST /apply-coupon (coupon=SAVE50)  // 二重適用で100%OFF?
+
+// 異なるクーポンの組み合わせ
+POST /apply-coupon (coupon=SAVE30)
+POST /apply-coupon (coupon=NEWUSER20)
+// 合計50%OFFだが、最大30%制限が効いていない
+
+// リファラルループ
+// Account A が Account B を紹介 → B が A を紹介 → 無限ボーナス
+
+// トライアル期間の延長
+// メールアドレスを変えて再度 free trial に登録
+// 同一カードで異なるアカウント作成</code></pre>
+
+            <h3>4. Workflow Bypass (ステップスキップ)</h3>
+<pre><code>// 支払いステップのスキップ
+// 正常: カート → 配送先 → 支払い → 確認 → 完了
+// 攻撃: カート → 直接「完了」のリクエストを送信
+
+POST /order/confirm
+{"cart_id": "abc123"}
+// 支払い検証なしで注文が確定
+
+// KYC/本人確認のスキップ
+// Step 1: 個人情報入力
+// Step 2: 身分証アップロード ← ここをスキップ
+// Step 3: 完了 → 直接 Step 3 のエンドポイントにアクセス
+
+// メール検証スキップ
+POST /api/verify-email
+{"email": "victim@target.com", "verified": true}
+// サーバーがクライアントからの verified フラグを信用</code></pre>
+
+            <h3>5. 2FA Bypass (ロジック系)</h3>
+<pre><code>// レスポンス操作
+// 2FA 検証失敗時: {"success": false, "redirect": "/2fa"}
+// 改ざん: {"success": true, "redirect": "/dashboard"}
+// クライアント側で redirect 先を制御している場合に有効
+
+// 直接ナビゲーション
+// /login → /2fa → /dashboard
+// /login 後に /2fa をスキップして /dashboard へ直接アクセス
+
+// バックアップコード
+// バックアップコードにレート制限がない → ブルートフォース可能
+// 通常 8桁数字 = 10^8 通り (時間はかかるが...)
+
+// コード再利用
+// 一度使用した 2FA コードが無効化されない</code></pre>
+
+            <h3>6. Feature Abuse</h3>
+<pre><code>// 通知機能の悪用
+// プロフィール名を変更するたびに全フォロワーに通知
+// → 名前を1000回変更 → フォロワーに1000通の通知 (Spam/DoS)
+
+// エクスポート機能の悪用
+// ユーザーデータエクスポートで他人の ID を指定
+GET /export?user_id=12345  // IDOR と組み合わせ
+
+// 検索機能の悪用
+// 非公開情報が検索結果のスニペットに表示される
+// autocomplete で未公開の情報がサジェストされる</code></pre>
+        </div>
+
+        <!-- 検出方法 -->
+        <div class="section">
+            <h2>検出方法</h2>
+
+            <h3>アプローチ</h3>
+            <ul>
+                <li><strong>正常フローを完全に理解する</strong>: まず正規ユーザーとして全機能を使い切る</li>
+                <li><strong>前提を疑う</strong>: 「これは常に正の値」「この順番でしかアクセスしない」等の暗黙の前提</li>
+                <li><strong>境界値テスト</strong>: 0, -1, MAX_INT, 空文字, null</li>
+                <li><strong>順序変更</strong>: ステップの入れ替え、スキップ、繰り返し</li>
+                <li><strong>タイミング操作</strong>: Race condition (並列リクエスト)</li>
+                <li><strong>ロール混同</strong>: 異なる権限レベルのフローを交差させる</li>
+            </ul>
+
+            <div class="callout warning">
+                <div class="callout-title">BB での Logic Bug の難しさ</div>
+                <p>
+                    Logic bug は「これはバグか仕様か」の判断が難しい。
+                    Submit 前に必ず確認: (1) 実際の金銭的/セキュリティ的 impact があるか、
+                    (2) vendor の意図的な設計ではないか (by-feature-not-bug)、
+                    (3) PoC で再現可能か。
+                </p>
+            </div>
+        </div>
+
+        <!-- Real-World Reports -->
+        <div class="section">
+            <h2>Real-World Reports</h2>
+
+            <div class="card">
+                <div class="card-title">
+                    <a href="https://hackerone.com/reports/391217" target="_blank">#391217 - Valve: Getting All CD Keys of Any Game</a>
+                </div>
+                <p><strong>Bounty: $20,000</strong> | Upvotes: 631</p>
+                <p>
+                    Valve のパートナーポータルで、ゲームの CD キーを全て取得できる Logic Bug。
+                    正規の API リクエストのパラメータを操作するだけで、他のパートナーのキーを含む
+                    全てのアクティベーションキーにアクセス可能だった。
+                </p>
+                <ul>
+                    <li>技術的には「正しいリクエスト」だが、認可チェックの欠如</li>
+                    <li>Impact: 何百万ドル相当のゲームキーの窃取</li>
+                    <li>Logic bug + IDOR のハイブリッド</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Race Condition の高額報告例</div>
+                <ul>
+                    <li>Starbucks: ギフトカード残高の race condition で無限チャージ ($5,000+)</li>
+                    <li>HackerOne: 招待リンクの race condition で二重参加 ($2,500)</li>
+                    <li>Shopify: 注文の race condition でアイテム複製</li>
+                </ul>
+            </div>
+
+            <div class="callout success">
+                <div class="callout-title">報奨金分析</div>
+                <p>
+                    Logic bug の報奨金は Impact 次第で大きく変動 ($500〜$50,000+)。
+                    金銭的影響が直接的な場合 (支払いバイパス、アイテム複製) は高額。
+                    「不便だが security impact がない」場合は reject されることも多い。
+                    <strong>明確な financial impact を示すことが鍵。</strong>
+                </p>
+            </div>
+        </div>
+
+        <!-- Practice -->
+        <div class="section">
+            <h2>Practice (WSA Labs)</h2>
+            <h3>PortSwigger Web Security Academy</h3>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/logic-flaws/examples/lab-logic-flaws-excessive-trust-in-client-side-controls" target="_blank">Lab: Excessive trust in client-side controls</a></li>
+                <li><a href="https://portswigger.net/web-security/logic-flaws/examples/lab-logic-flaws-flawed-enforcement-of-business-rules" target="_blank">Lab: Flawed enforcement of business rules</a></li>
+                <li><a href="https://portswigger.net/web-security/logic-flaws/examples/lab-logic-flaws-insufficient-workflow-validation" target="_blank">Lab: Insufficient workflow validation</a></li>
+                <li><a href="https://portswigger.net/web-security/race-conditions/lab-race-conditions-limit-overrun" target="_blank">Lab: Limit overrun race conditions</a></li>
+                <li><a href="https://portswigger.net/web-security/logic-flaws/examples/lab-logic-flaws-authentication-bypass-via-flawed-state-machine" target="_blank">Lab: Authentication bypass via flawed state machine</a></li>
+            </ul>
+        </div>
+
+        <!-- Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>正常フローを先に完全理解</strong>: 攻撃の前に正規ユーザー体験を網羅する</li>
+                    <li><strong>暗黙の前提を列挙して破る</strong>: 開発者の「こうするはず」を逆に取る</li>
+                    <li><strong>Race condition は BB の金脈</strong>: Single-packet attack で再現性を高める</li>
+                    <li><strong>Financial impact を明示する</strong>: 「$X の損害が発生しうる」と具体的に示す</li>
+                    <li><strong>by-feature-not-bug を見極める</strong>: 仕様通りの動作を bug と報告しない</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/logic-flaws" target="_blank">PortSwigger - Business Logic Vulnerabilities</a></li>
+                <li><a href="https://portswigger.net/web-security/race-conditions" target="_blank">PortSwigger - Race Conditions</a></li>
+                <li><a href="https://portswigger.net/research/smashing-the-state-machine" target="_blank">PortSwigger Research - Smashing the State Machine (Single-packet Attack)</a></li>
+                <li><a href="https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/10-Business_Logic_Testing/" target="_blank">OWASP - Business Logic Testing</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete Button -->
+        <div style="text-align:center; margin:2rem 0;">
+            <button class="complete-btn" data-module-id="19-logic" onclick="toggleComplete('19-logic')">Mark Complete</button>
+        </div>
+
+        <!-- Page Nav -->
+        <div class="page-nav">
+            <a href="18-ssti.html">&larr; Prev: SSTI</a>
+            <a href="1a-open-redirect.html">Next: Open Redirect &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

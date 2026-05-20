@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tools Setup & Workflow - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 0: Foundation &gt; Tools Setup & Workflow
+        </div>
+
+        <div class="page-header">
+            <h1>Tools Setup & Workflow</h1>
+            <p class="subtitle">BB ハンティングに必要なツール群のセットアップと、効率的な調査ワークフローを構築する。</p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-practice">Practice</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Burp Suite</h2>
+            <p>
+                BB ハンターの標準ツール。HTTP/HTTPS 通信の intercept, 改ざん, 再送, 自動スキャンを行う。
+                Community Edition (無料) でも Proxy, Repeater, Intruder (速度制限あり) が使える。
+            </p>
+
+            <h3>Core Features</h3>
+            <table>
+                <thead><tr><th>機能</th><th>用途</th><th>BB での使い方</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Proxy</strong></td><td>通信の傍受と改ざん</td><td>認証リクエストの構造理解、パラメータ特定</td></tr>
+                    <tr><td><strong>Repeater</strong></td><td>リクエストの手動編集と再送</td><td>パラメータ操作、PoC 構築</td></tr>
+                    <tr><td><strong>Intruder</strong></td><td>自動化された攻撃 (brute force, fuzzing)</td><td>パラメータ列挙、IDOR のID走査</td></tr>
+                    <tr><td><strong>Scanner</strong> (Pro)</td><td>自動脆弱性スキャン</td><td>XSS, SQLi の初期検出</td></tr>
+                    <tr><td><strong>Decoder</strong></td><td>エンコード/デコード</td><td>Base64, URL, HTML entity の変換</td></tr>
+                    <tr><td><strong>Comparer</strong></td><td>レスポンス差分比較</td><td>認証あり/なしの差分、role 別の差分</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Setup 手順</h3>
+<pre><code># 1. Burp Suite ダウンロード
+# https://portswigger.net/burp/releases
+
+# 2. CA 証明書のインストール
+# Burp 起動 → Proxy → Options → Import/Export CA Certificate
+# ブラウザに CA をインストール (Firefox: Settings → Certificates → Import)
+
+# 3. ブラウザのプロキシ設定
+# FoxyProxy (Firefox/Chrome extension) で 127.0.0.1:8080 を設定
+# またはシステムプロキシを設定
+
+# 4. HTTPS intercept の確認
+# https://burpsuite にアクセスして "Burp Suite Community Edition" が表示されれば成功</code></pre>
+
+            <h3>必須 Extensions</h3>
+            <table>
+                <thead><tr><th>Extension</th><th>機能</th><th>BB での用途</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Authorize</strong></td><td>権限テスト自動化</td><td>IDOR / Broken Access Control の検出。低権限 Cookie を設定して全リクエストを再送</td></tr>
+                    <tr><td><strong>AuthMatrix</strong></td><td>アクセス制御マトリクス</td><td>複数ロール間の権限差分を可視化</td></tr>
+                    <tr><td><strong>Param Miner</strong></td><td>隠しパラメータ発見</td><td>Web cache poisoning, hidden parameter injection</td></tr>
+                    <tr><td><strong>Logger++</strong></td><td>全通信のログ</td><td>正規表現フィルタで特定パターンの通信を抽出</td></tr>
+                    <tr><td><strong>Hackvertor</strong></td><td>高度なエンコード変換</td><td>多段エンコードの自動化</td></tr>
+                    <tr><td><strong>JWT Editor</strong></td><td>JWT の編集と攻撃</td><td>alg confusion, key injection の自動化</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: Burp Community vs Pro</div>
+                <p>
+                    Community Edition の Intruder は速度制限 (throttled) がある。
+                    BB を本格的にやるなら Pro ($449/year) は投資回収しやすい。
+                    ただし Community + 手動 + Python scripting でも十分に成果は出せる。
+                    最初は Community で始めて、最初の報酬で Pro に移行するのが現実的。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Caido</h2>
+            <p>
+                Burp Suite のモダンな代替ツール。Rust 製で高速、UI が直感的。
+                Free tier でも Proxy, Replay (Repeater相当), Automate (Intruder相当) が使える。
+            </p>
+
+            <h3>Burp との主な違い</h3>
+            <table>
+                <thead><tr><th>比較項目</th><th>Burp Suite</th><th>Caido</th></tr></thead>
+                <tbody>
+                    <tr><td>言語</td><td>Java</td><td>Rust + Web UI</td></tr>
+                    <tr><td>速度</td><td>標準</td><td>高速 (特に大量リクエスト)</td></tr>
+                    <tr><td>Extension</td><td>Java/Python/Ruby (BApp Store)</td><td>JavaScript Plugin (開発中)</td></tr>
+                    <tr><td>価格</td><td>Pro $449/year</td><td>Pro $10/month</td></tr>
+                    <tr><td>HTTPQL</td><td>なし</td><td>SQL-like なリクエストフィルタリング</td></tr>
+                </tbody>
+            </table>
+
+<pre><code># Caido のインストール (Windows)
+# https://caido.io/download からインストーラをダウンロード
+
+# CLI でも起動可能
+caido --listen 127.0.0.1:8080
+
+# HTTPQL の例 (Caido 独自機能)
+# 特定ホストの POST リクエストのみ表示
+req.method == "POST" AND req.host == "api.target.com"
+
+# レスポンスに "admin" を含むリクエスト
+resp.body CONTAINS "admin"</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Browser DevTools</h2>
+            <p>
+                Proxy ツールなしでも多くの情報が得られる。特に初期調査で重要。
+            </p>
+
+            <h3>Network タブ</h3>
+            <ul>
+                <li>XHR/Fetch フィルタで API コールを特定</li>
+                <li>Response headers で CORS, CSP, Cookie 属性を確認</li>
+                <li>Copy as cURL でリクエストを再現</li>
+                <li>Initiator でどの JS がリクエストを発行したか追跡</li>
+            </ul>
+
+            <h3>Application タブ</h3>
+            <ul>
+                <li>Cookies: 属性 (HttpOnly, Secure, SameSite) を一覧</li>
+                <li>Local Storage / Session Storage: JWT やトークンの保存確認</li>
+                <li>Service Workers: cache 内容、offline 時の挙動</li>
+            </ul>
+
+            <h3>Console タブ</h3>
+<pre><code>// Cookie の一覧 (HttpOnly 以外)
+document.cookie
+
+// 現在のページで使われている全イベントリスナー
+getEventListeners(document)
+
+// fetch で API テスト
+fetch('/api/admin/users', {credentials: 'include'})
+  .then(r => r.json()).then(console.log)
+
+// postMessage の監視 (XSS via postMessage の調査)
+window.addEventListener('message', e => console.log(e.origin, e.data))</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Command-Line Tools</h2>
+
+            <h3>curl</h3>
+<pre><code># 基本的な GET
+curl -v https://api.target.com/users/me
+
+# POST with JSON
+curl -X POST https://api.target.com/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@test.com","password":"pass"}'
+
+# Cookie 付きリクエスト
+curl -b "session=abc123" https://api.target.com/admin
+
+# 出力を jq でパース
+curl -s https://api.target.com/users | jq '.[] | {id, role}'
+
+# Follow redirects + show headers
+curl -L -D - https://target.com/oauth/callback?code=xxx</code></pre>
+
+            <h3>httpie (curl の代替)</h3>
+<pre><code># より読みやすい出力
+http GET https://api.target.com/users Authorization:"Bearer token123"
+
+# POST (JSON が自動)
+http POST https://api.target.com/login email=test@test.com password=pass
+
+# Form data
+http --form POST https://target.com/upload file@exploit.html</code></pre>
+
+            <h3>Python requests</h3>
+<pre><code>import requests
+
+# Session を使って Cookie を自動管理
+s = requests.Session()
+
+# Login
+s.post('https://target.com/login', json={
+    'email': 'test@test.com',
+    'password': 'password'
+})
+
+# Authenticated request (Cookie は自動送信)
+r = s.get('https://target.com/api/admin/users')
+print(r.status_code, r.json())
+
+# IDOR テスト
+for user_id in range(1, 100):
+    r = s.get(f'https://target.com/api/users/{user_id}')
+    if r.status_code == 200:
+        print(f"Accessible: user {user_id} - {r.json()}")</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Docker for Local Testing</h2>
+            <p>
+                対象アプリケーション (OSS) をローカルで動かして、安全にテストする環境を構築する。
+                BB (特に huntr.com) では PoC 環境の構築が必須。
+            </p>
+
+<pre><code># 典型的な PoC 環境のセットアップ
+# 例: Node.js アプリ
+git clone https://github.com/target/vulnerable-app.git
+cd vulnerable-app
+docker-compose up -d
+
+# 例: Rails アプリ
+docker-compose run web rails db:setup
+docker-compose up
+
+# PostgreSQL + Redis + App の典型構成
+# docker-compose.yml
+version: '3'
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_PASSWORD: password
+  redis:
+    image: redis:7
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+      - redis</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">BB視点: PoC 環境の重要性</div>
+                <p>
+                    huntr.com (OSS BB) では再現環境の構築が report quality に直結する。
+                    Docker でワンコマンドで再現できる PoC は triage 速度を上げ、報酬確定が早まる。
+                    また、production に影響を与えずに destructive なテスト (SQLi, file write 等) が可能。
+                </p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Workflow: Intercept → Analyze → Modify → Replay</h2>
+
+            <h3>Burp Suite のリクエストフロー</h3>
+            <div class="mermaid">
+flowchart LR
+    B[Browser] -->|"1. Request送信"| P["Burp Proxy<br/>Intercept"]
+    P -->|"2. 確認/改ざん"| S[Server]
+    S -->|"3. Response"| P
+    P -->|"4. 確認"| B
+
+    P -->|"コピー"| R["Repeater<br/>繰り返しテスト"]
+    R -->|"改変して再送"| S
+
+    P -->|"コピー"| I["Intruder<br/>自動化テスト"]
+    I -->|"大量パターン送信"| S
+            </div>
+
+            <h3>1. Intercept (通信の傍受)</h3>
+            <ul>
+                <li>Burp/Caido の Proxy で通信を記録</li>
+                <li>通常のユーザー操作を一通り行い、API の全体像を把握</li>
+                <li>認証フロー、権限切り替え、ファイルアップロード等を重点的に記録</li>
+            </ul>
+
+            <h3>2. Analyze (分析)</h3>
+            <ul>
+                <li>API endpoint の一覧を作成 (Site Map)</li>
+                <li>認証トークンの構造を解析 (JWT? Session Cookie? API Key?)</li>
+                <li>パラメータの命名規則からパターンを推測 (user_id, account_id → IDOR)</li>
+                <li>レスポンスヘッダーから技術スタックを特定 (X-Powered-By, Server)</li>
+            </ul>
+
+            <h3>3. Modify (改ざん)</h3>
+            <ul>
+                <li>パラメータ値の変更 (IDOR: 自分のID → 他人のID)</li>
+                <li>HTTP Method の変更 (GET → PUT/DELETE)</li>
+                <li>認証ヘッダーの削除/低権限への差し替え</li>
+                <li>Content-Type の変更 (parser differential)</li>
+            </ul>
+
+            <h3>4. Replay (再送と観察)</h3>
+            <ul>
+                <li>Repeater で改ざんリクエストを送信</li>
+                <li>レスポンスの差分を Comparer で比較</li>
+                <li>成功したら PoC スクリプトに変換 (Python/curl)</li>
+                <li>再現性を確認して report 作成</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>推奨ツールセット (初期構成)</h2>
+            <table>
+                <thead><tr><th>Category</th><th>Tool</th><th>Priority</th></tr></thead>
+                <tbody>
+                    <tr><td>Proxy</td><td>Burp Suite Community + Caido Free</td><td>必須</td></tr>
+                    <tr><td>Browser</td><td>Firefox (FoxyProxy) + Chrome (DevTools)</td><td>必須</td></tr>
+                    <tr><td>CLI</td><td>curl, httpie, jq</td><td>必須</td></tr>
+                    <tr><td>Scripting</td><td>Python 3 + requests + beautifulsoup4</td><td>必須</td></tr>
+                    <tr><td>JWT</td><td>jwt_tool, jwt.io</td><td>高</td></tr>
+                    <tr><td>Recon</td><td>subfinder, httpx, nuclei</td><td>中 (Phase 1 以降)</td></tr>
+                    <tr><td>Container</td><td>Docker Desktop</td><td>高 (OSS BB)</td></tr>
+                    <tr><td>Note</td><td>Obsidian / Notion</td><td>高 (知見蓄積)</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Burp Suite</strong> は BB の必須ツール。Authorize extension で IDOR/BAC を半自動化。</li>
+                    <li><strong>Caido</strong> はモダンで高速。Burp と併用して使い分けるのが効率的。</li>
+                    <li><strong>DevTools</strong> だけでも初期調査は十分可能。Network + Application タブを活用。</li>
+                    <li><strong>Python requests</strong> で PoC を再現可能な形にする。report の質が上がる。</li>
+                    <li><strong>Docker</strong> は OSS BB で必須。ワンコマンド再現環境を心がける。</li>
+                    <li><strong>Workflow</strong>: Intercept → Analyze → Modify → Replay のサイクルを高速で回す。</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="05-tools" onclick="toggleComplete('05-tools')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="04-crypto-basics.html">&larr; 前: Crypto Basics</a>
+            <a href="06-linux-networking.html">次: Linux & Networking &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

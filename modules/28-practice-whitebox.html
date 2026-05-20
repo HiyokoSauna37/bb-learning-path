@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Practice: bb-whitebox-01 - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .hint-toggle { cursor:pointer; color:var(--accent); border:1px solid var(--border); padding:0.3rem 0.8rem; border-radius:4px; font-size:0.85rem; background:var(--surface); }
+        .hint-toggle:hover { border-color:var(--accent); }
+        .hint-content { display:none; margin-top:0.5rem; padding:0.8rem; background:var(--surface-raised); border-radius:6px; border:1px solid var(--border); }
+        .hint-content.show { display:block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 2: Source Code Audit &gt; Practice: bb-whitebox-01
+        </div>
+
+        <div class="page-header">
+            <h1>Practice: bb-whitebox-01 演習</h1>
+            <p class="subtitle">
+                TaskFlow API (Express/Node.js) の whitebox security audit 演習。認証、タスク管理、チーム、ユーザー、Webhook、Admin の6つの route に埋め込まれた脆弱性を発見せよ。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-practice">Practice</span>
+                <span class="tag tag-handson">Hands-on</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>演習対象: TaskFlow API</h2>
+            <p>場所: <code>practice/bb-whitebox-01/</code></p>
+            <p>Express ベースの Task Management API。以下の route 構成:</p>
+
+            <table>
+                <thead><tr><th>Route File</th><th>機能</th><th>Auth Required</th></tr></thead>
+                <tbody>
+                    <tr><td><code>routes/auth.js</code></td><td>Register, Login, Password Reset</td><td>No (public)</td></tr>
+                    <tr><td><code>routes/tasks.js</code></td><td>CRUD for tasks</td><td>Yes</td></tr>
+                    <tr><td><code>routes/teams.js</code></td><td>Team creation, member management</td><td>Yes</td></tr>
+                    <tr><td><code>routes/users.js</code></td><td>Profile, avatar, settings</td><td>Yes</td></tr>
+                    <tr><td><code>routes/webhooks.js</code></td><td>Webhook registration, trigger</td><td>Yes</td></tr>
+                    <tr><td><code>routes/admin.js</code></td><td>User management, system config</td><td>Yes (admin)</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Setup</h3>
+<pre><code>cd practice/bb-whitebox-01
+npm install
+node server.js  # Port 3000</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>演習の進め方</h2>
+            <ol>
+                <li><strong>Phase 1: Sink Survey</strong> — 各ファイルを grep で sweep し、危険な sink を列挙</li>
+                <li><strong>Phase 2: Auth Audit</strong> — middleware 適用状況を確認、抜け漏れを探す</li>
+                <li><strong>Phase 3: Data Flow Trace</strong> — 各 sink に対して source (user input) が到達するか追跡</li>
+                <li><strong>Phase 4: PoC 作成</strong> — 脆弱性を確認する curl コマンドを作成</li>
+                <li><strong>Phase 5: Report Draft</strong> — huntr 形式で報告書を作成 (練習)</li>
+            </ol>
+
+            <div class="callout">
+                <div class="callout-title">目標: 5つ以上の脆弱性クラスを発見する</div>
+                <p>この演習には少なくとも以下のカテゴリの脆弱性が埋め込まれている: Auth Bypass (JWT), SQL Injection, Command Injection, IDOR, SSRF, Path Traversal。全て見つけられるか?</p>
+            </div>
+
+            <div class="callout">
+                <div class="callout-title">時間の目安とコツ</div>
+                <p><strong>想定所要時間</strong>: 2〜4時間で5個以上の発見。4時間で3個未満なら Module 20〜24 を復習してから再挑戦。</p>
+                <p><strong>詰まったら</strong>: 1つのカテゴリに30分以上悩んだら Hint を開き、それでも分からなければ次の route に移る。後で戻れば良い。</p>
+                <p><strong>おすすめ順序</strong>: admin.js (auth bypass が最も見つけやすい) → tasks.js (SQLi の grep pattern が明確) → webhooks.js (SSRF は関数1つ確認するだけ)</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Route ごとのヒント</h2>
+
+            <h3>auth.js</h3>
+            <p>認証フローは全ての出発点。登録・ログイン・パスワードリセットの実装を確認。</p>
+            <button class="hint-toggle" onclick="this.nextElementSibling.classList.toggle('show')">Hint 1 を表示</button>
+            <div class="hint-content">
+                <p>password reset の token 生成を確認せよ。<code>crypto.randomBytes</code> のバイト数は十分か? 4 bytes = 32bit は brute-force 可能。token の有効期限チェックは?</p>
+            </div>
+            <button class="hint-toggle" onclick="this.nextElementSibling.classList.toggle('show')">Hint 2 を表示</button>
+            <div class="hint-content">
+                <p>登録時の入力バリデーションを確認。role フィールドは制御されているか? JWT の algorithms 設定 (alg: none) は?</p>
+            </div>
+
+            <h3>tasks.js</h3>
+            <p>タスクの CRUD 操作。最も機能が多い route。</p>
+            <button class="hint-toggle" onclick="this.nextElementSibling.classList.toggle('show')">Hint 1 を表示</button>
+            <div class="hint-content">
+                <p>task の search/filter 機能を確認。query パラメータが SQL 文に直接連結 (string interpolation) されていないか? sort_by パラメータも要確認。</p>
+            </div>
+            <button class="hint-toggle" onclick="this.nextElementSibling.classList.toggle('show')">Hint 2 を表示</button>
+            <div class="hint-content">
+                <p>task の export 機能を確認。ファイルパス構築に user input が使われていないか? path.join の引数を確認。</p>
+            </div>
+
+            <h3>teams.js</h3>
+            <p>チーム機能は authorization (認可) の実装が重要。</p>
+            <button class="hint-toggle" onclick="this.nextElementSibling.classList.toggle('show')">Hint 1 を表示</button>
+            <div class="hint-content">
+                <p>チームメンバーの追加/削除に owner チェックはあるか? 他人のチームを操作できないか? (IDOR)</p>
+            </div>
+            <button class="hint-toggle" onclick="this.nextElementSibling.classList.toggle('show')">Hint 2 を表示</button>
+            <div class="hint-content">
+                <p>invite 機能のトークン生成と検証を確認。timing attack は可能か?</p>
+            </div>
+
+            <h3>users.js</h3>
+            <p>ユーザープロファイルとアバター管理。</p>
+            <button class="hint-toggle" onclick="this.nextElementSibling.classList.toggle('show')">Hint 1 を表示</button>
+            <div class="hint-content">
+                <p>avatar upload のファイル名処理を確認。ユーザ指定のファイル名がそのまま保存パスに使われていないか?</p>
+            </div>
+            <button class="hint-toggle" onclick="this.nextElementSibling.classList.toggle('show')">Hint 2 を表示</button>
+            <div class="hint-content">
+                <p>profile update でどのフィールドが変更可能か? role や isAdmin など権限関連フィールドは保護されているか?</p>
+            </div>
+
+            <h3>webhooks.js</h3>
+            <p>Webhook は SSRF の典型的な sink。</p>
+            <button class="hint-toggle" onclick="this.nextElementSibling.classList.toggle('show')">Hint 1 を表示</button>
+            <div class="hint-content">
+                <p>webhook の URL 登録時に validation はあるか? <code>http://127.0.0.1</code> や <code>http://169.254.169.254</code> はブロックされるか?</p>
+            </div>
+            <button class="hint-toggle" onclick="this.nextElementSibling.classList.toggle('show')">Hint 2 を表示</button>
+            <div class="hint-content">
+                <p>webhook trigger 時の HTTP request に redirect follow はあるか? DNS rebinding 対策は?</p>
+            </div>
+
+            <h3>admin.js</h3>
+            <p>Admin route は最も高い privilege。認可チェックが正しいか?</p>
+            <button class="hint-toggle" onclick="this.nextElementSibling.classList.toggle('show')">Hint 1 を表示</button>
+            <div class="hint-content">
+                <p>admin middleware の適用を確認。全 route に admin check が付いているか? 一部 route は auth のみで admin check がないのでは?</p>
+            </div>
+            <button class="hint-toggle" onclick="this.nextElementSibling.classList.toggle('show')">Hint 2 を表示</button>
+            <div class="hint-content">
+                <p>system config の更新で eval や動的コード実行はないか? template rendering に user input は渡されていないか?</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Grep Sweep テンプレート</h2>
+            <p>まずはこれで全体を sweep:</p>
+
+<pre><code># Sink survey
+rg -n "exec\(|execSync\(|spawn\(" practice/bb-whitebox-01/
+rg -n "eval\(|Function\(" practice/bb-whitebox-01/
+rg -n "path\.join\(.*req\." practice/bb-whitebox-01/
+rg -n "query.*\$\{|query.*\+" practice/bb-whitebox-01/
+rg -n "db\.(run|get|all|prepare)" practice/bb-whitebox-01/
+rg -n "axios\(|fetch\(|http\.get\(" practice/bb-whitebox-01/
+rg -n "Math\.random\(\)" practice/bb-whitebox-01/
+
+# Auth audit
+rg -n "router\.(get|post|put|delete)" practice/bb-whitebox-01/routes/
+rg -n "authMiddleware|requireAuth|isAdmin" practice/bb-whitebox-01/</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Expected Findings (カテゴリのみ)</h2>
+            <p>最低限見つけるべき脆弱性カテゴリ:</p>
+            <table>
+                <thead><tr><th>#</th><th>Category</th><th>Severity</th><th>Route</th></tr></thead>
+                <tbody>
+                    <tr><td>1</td><td>Auth Bypass (JWT alg:none)</td><td>Critical</td><td>middleware/auth.js</td></tr>
+                    <tr><td>2</td><td>SQL Injection</td><td>High</td><td>tasks.js</td></tr>
+                    <tr><td>3</td><td>SSRF</td><td>High</td><td>webhooks.js</td></tr>
+                    <tr><td>4</td><td>Path Traversal</td><td>Medium-High</td><td>tasks.js</td></tr>
+                    <tr><td>5</td><td>IDOR</td><td>Medium</td><td>teams.js</td></tr>
+                    <tr><td>6</td><td>Weak Token Generation</td><td>Medium</td><td>auth.js</td></tr>
+                </tbody>
+            </table>
+
+            <div class="callout success">
+                <div class="callout-title">ゴール</div>
+                <p>7つ中 5つ以上を見つけて PoC (curl コマンド) を作成できれば、huntr での whitebox audit に必要なスキルは十分。</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>レポート練習テンプレート</h2>
+<pre><code>## Description
+[脆弱性の概要を1-2文で]
+
+## Impact
+[攻撃者が何をできるか。CIA への影響]
+
+## Steps to Reproduce
+1. [前提条件]
+2. [攻撃手順]
+3. [期待される結果]
+
+## Proof of Concept
+```bash
+curl -X POST http://localhost:3000/api/... \
+  -H "Content-Type: application/json" \
+  -d '{"payload": "..."}'
+```
+
+## Affected Code
+File: `routes/xxx.js`, Line XX-XX
+
+## Suggested Fix
+[修正方法の提案]</code></pre>
+        </div>
+
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>Grep sweep first</strong>: 全 sink を機械的に列挙してから深掘りする</li>
+                    <li><strong>Auth audit</strong>: middleware 適用状況を route 一覧と突き合わせる</li>
+                    <li><strong>1つ見つけたら sibling を探す</strong>: 同じパターンが他の route にもある</li>
+                    <li><strong>PoC は curl で完結</strong>: 再現性のある minimal PoC を作成する習慣</li>
+                    <li>この演習の技術は huntr の実際の target にそのまま適用可能</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="28-prac" onclick="toggleComplete('28-prac')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="27-dependency-confusion.html">&larr; 前: Dependency Confusion</a>
+            <a href="29-huntr-workflow.html">次: huntr Workflow &rarr;</a>
+        </div>
+    </div>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>

@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDOR & Broken Access Control - Bug Bounty Learning Path</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .complete-btn { display:inline-block; padding:0.5rem 1.2rem; border:1px solid var(--green); border-radius:6px; background:transparent; color:var(--green); cursor:pointer; font-size:0.85rem; transition:all 0.2s; }
+        .complete-btn:hover { background:var(--green); color:#000; }
+        .complete-btn.is-complete { background:var(--green); color:#000; }
+        .diagram { background:var(--surface-raised); border:1px solid var(--border); border-radius:8px; padding:1.5rem; margin:1rem 0; font-family:'Cascadia Code','Fira Code',monospace; font-size:0.82rem; line-height:1.6; white-space:pre; overflow-x:auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="../index.html">Top</a> &gt; Phase 1: Core Vulnerabilities &gt; IDOR
+        </div>
+
+        <div class="page-header">
+            <h1>IDOR & Broken Access Control</h1>
+            <p class="subtitle">
+                他人のリソースに自分の権限でアクセスする。BB で最も発見しやすく、かつ Impact が高い脆弱性クラス。
+                OWASP Top 10 2021 で #1 (Broken Access Control)。
+            </p>
+            <div style="margin-top:1rem;">
+                <span class="tag tag-theory">Theory</span>
+                <span class="tag tag-handson">Hands-on</span>
+                <span class="tag tag-casestudy">Case Study</span>
+            </div>
+        </div>
+
+        <div class="callout success">
+            <div class="callout-title">初心者が最初に見つけやすい脆弱性</div>
+            <p>
+                IDOR は BB で<strong>最も初心者が見つけやすい脆弱性</strong>の1つ。
+                複雑なペイロードは不要 — URL の中の数字を変えるだけで見つかることがある。
+                OWASP Top 10 (Webセキュリティのリスクランキング) 2021 で #1 にランクされた「Broken Access Control」の代表格。
+            </p>
+        </div>
+
+        <!-- 原理 -->
+        <div class="section">
+            <h2>IDOR の原理</h2>
+
+            <h3>Insecure Direct Object Reference とは</h3>
+            <p>
+                アプリケーションが <strong>ユーザーが指定したID (Object Reference) をそのまま使って</strong>
+                バックエンドのリソースにアクセスする際、<strong>そのユーザーがそのリソースへのアクセス権を持つか検証しない</strong> 問題。
+            </p>
+
+            <div class="mermaid">
+sequenceDiagram
+    participant A as 攻撃者 (User A)
+    participant S as サーバー
+    participant DB as データベース
+
+    A->>S: GET /api/orders/1001 (自分)
+    S->>DB: SELECT * FROM orders WHERE id=1001
+    DB->>S: User Aのデータ
+    S->>A: 200 OK (正常)
+
+    Note over A: IDを1002に変更
+    A->>S: GET /api/orders/1002 (他人!)
+    S->>DB: SELECT * FROM orders WHERE id=1002
+    Note over DB: user_idチェックなし!
+    DB->>S: User Bのデータ
+    S->>A: 200 OK (他人のデータ漏洩!)
+            </div>
+
+            <h3>Broken Access Control との関係</h3>
+            <p>
+                IDOR は Broken Access Control の<strong>一形態</strong>。Access Control の問題は以下に大別される:
+            </p>
+            <table>
+                <thead><tr><th>カテゴリ</th><th>内容</th><th>IDOR との関係</th></tr></thead>
+                <tbody>
+                    <tr><td>Horizontal privilege escalation</td><td>同じ権限レベルの他ユーザーのデータにアクセス</td><td>IDOR の典型 (user A → user B)</td></tr>
+                    <tr><td>Vertical privilege escalation</td><td>より高い権限の操作を実行</td><td>Admin endpoint に一般ユーザーがアクセス</td></tr>
+                    <tr><td>Context-dependent access control</td><td>状態遷移の制約を無視</td><td>未払いの注文を「完了」に変更</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- ID の種類 -->
+        <div class="section">
+            <h2>Object Reference の種類と攻撃難易度</h2>
+
+            <table>
+                <thead><tr><th>ID の形式</th><th>予測可能性</th><th>攻撃方法</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td>Sequential integer (<code>1001</code>, <code>1002</code>)</td>
+                        <td>極めて高い</td>
+                        <td>+1 / -1 で列挙。Burp Intruder で範囲スキャン</td>
+                    </tr>
+                    <tr>
+                        <td>UUID v4 (<code>550e8400-e29b-41d4-a716-446655440000</code>)</td>
+                        <td>低い (ランダム)</td>
+                        <td>別の leak 経路から UUID を取得: API response, URL in Referer, shared link, error message</td>
+                    </tr>
+                    <tr>
+                        <td>Encoded ID (Base64)</td>
+                        <td>見かけ上は複雑だが...</td>
+                        <td>Decode → 内部は sequential int → +1 して re-encode</td>
+                    </tr>
+                    <tr>
+                        <td>Hash (MD5/SHA)</td>
+                        <td>高い (入力が予測可能なら)</td>
+                        <td>例: <code>MD5(user_id + email)</code> → 入力を推測して hash 生成</td>
+                    </tr>
+                    <tr>
+                        <td>Username / Email</td>
+                        <td>高い</td>
+                        <td><code>/api/user/john@example.com</code> → 任意のメールアドレスを指定</td>
+                    </tr>
+                    <tr>
+                        <td>Filename</td>
+                        <td>可変</td>
+                        <td><code>/uploads/invoice_1001.pdf</code> → 番号を変えてアクセス</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="callout">
+                <div class="callout-title">UUID でも IDOR は成立する</div>
+                <p>
+                    UUID v4 は brute-force 不可能だが、<strong>leak 経路</strong>が存在すればOK:
+                </p>
+                <ul>
+                    <li>API response のリスト内に他ユーザーの UUID が含まれる</li>
+                    <li>共有リンク (shared link) の URL に UUID が含まれる</li>
+                    <li>GraphQL introspection / WebSocket メッセージに UUID が含まれる</li>
+                    <li>Error message 内に UUID が漏洩する</li>
+                    <li>Referrer header 経由で外部サービスに漏洩</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 検出方法 -->
+        <div class="section">
+            <h2>IDOR の検出方法</h2>
+
+            <h3>基本手順</h3>
+            <ol>
+                <li><strong>2つのアカウントを用意</strong>: Account A (攻撃者), Account B (被害者)</li>
+                <li>Account B で操作して、リソース ID を確認 (response 内の <code>id</code>, <code>user_id</code> 等)</li>
+                <li>Account A のセッションで、Account B の ID を使ってリクエストを送信</li>
+                <li>Response を比較: 200 で B のデータが返ったら IDOR 確定</li>
+            </ol>
+
+            <h3>テストすべき HTTP Methods</h3>
+<pre><code># Read (情報漏洩)
+GET /api/users/VICTIM_ID
+GET /api/orders/VICTIM_ORDER_ID
+GET /api/messages/VICTIM_CONVERSATION_ID
+
+# Write (データ改ざん)
+PUT /api/users/VICTIM_ID {"name": "hacked"}
+PATCH /api/settings/VICTIM_ID {"email": "attacker@evil.com"}
+
+# Delete (データ破壊)
+DELETE /api/posts/VICTIM_POST_ID
+
+# Action (状態変更)
+POST /api/orders/VICTIM_ORDER_ID/cancel
+POST /api/users/VICTIM_ID/activate</code></pre>
+
+            <h3>見落としがちなポイント</h3>
+            <ul>
+                <li><strong>Body 内の ID</strong>: URL path だけでなく JSON body 内の <code>user_id</code>, <code>owner_id</code> を書き換え</li>
+                <li><strong>GraphQL の node ID</strong>: <code>query { node(id: "VICTIM_GID") { ... } }</code></li>
+                <li><strong>ファイルパス</strong>: <code>/download?file=../user_b/invoice.pdf</code> (Path Traversal + IDOR)</li>
+                <li><strong>Webhook / Notification の recipient</strong>: <code>notify_user_id</code> を書き換えて他人に通知を飛ばす</li>
+                <li><strong>Array parameter</strong>: <code>?id[]=own&id[]=victim</code> で authorization bypass (Discourse 事例)</li>
+            </ul>
+
+            <div class="callout warning">
+                <div class="callout-title">mei-bb 実体験: Array parameter trick</div>
+                <p>
+                    Discourse の <code>PostsController#revert</code> で <code>?id[]=ownX&id[]=victimY</code> を使い、
+                    <code>find_by(post_id: array)</code> が victim の row を返すが権限チェックは own の post に対して行われる trick。
+                    単一 ID では IDOR にならないが、<strong>配列にすると ORM の挙動差</strong>で bypass できるパターン。
+                    (Report #3711546, In Review)
+                </p>
+            </div>
+        </div>
+
+        <!-- Real-World Reports -->
+        <div class="section">
+            <h2>Real-World Reports (HackerOne 実例解析)</h2>
+
+            <h3>Case 1: PayPal — IDOR to add secondary users ($10,500)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/415081" target="_blank">#415081</a> (774 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>PayPal Business の「ユーザー管理」API: <code>/businessmanage/users/api/v1/users</code></li>
+                    <li>POST リクエストの body に <code>account_id</code> パラメータ</li>
+                    <li>自分の account_id の代わりに <strong>被害者の account_id</strong> を指定</li>
+                    <li>被害者のビジネスアカウントに自分を管理者として追加 → <strong>Account Takeover</strong></li>
+                </ol>
+                <p><strong>学び:</strong> Write 系 IDOR は Read 系より圧倒的に Impact が高い。
+                「自分のアカウントに他人を追加」ではなく「他人のアカウントに自分を追加」= ATO。
+                Body 内の ID 書き換えは必ずテストする。</p>
+            </div>
+
+            <h3>Case 2: HackerOne — IDOR deleting certifications ($12,500)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/2122671" target="_blank">#2122671</a> (374 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>HackerOne の GraphQL API: <code>CreateOrUpdateHackerCertification</code> mutation</li>
+                    <li>Mutation の input に <code>hacker_id</code> パラメータ</li>
+                    <li>他のハッカーの <code>hacker_id</code> を指定 + 空の certification data を送信</li>
+                    <li>被害者の全 certification/license が削除される</li>
+                </ol>
+                <p><strong>学び:</strong> GraphQL の mutation は IDOR の温床。
+                特に「Update or Create」系の mutation で <code>user_id</code> / <code>owner_id</code> が input にある場合、
+                authorization check が不足しがち。</p>
+            </div>
+
+            <h3>Case 3: Reddit — Getting mod logs via IDOR ($5,000)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/1658418" target="_blank">#1658418</a> (152 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>Reddit の API: <code>/r/{subreddit}/about/log</code></li>
+                    <li>通常はモデレーターのみアクセス可能</li>
+                    <li>API の別 endpoint 経由で subreddit の internal ID を取得</li>
+                    <li>Internal ID を使って mod log API にアクセス → 非公開 subreddit の moderator action が全て見える</li>
+                </ol>
+                <p><strong>学び:</strong> Public-facing endpoint で取得した ID を使って、
+                本来アクセスできない restricted endpoint にアクセスする「ID leak → IDOR chain」パターン。</p>
+            </div>
+
+            <h3>Case 4: Shopify — Billing Document IDOR via GraphQL ($5,000)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/2207248" target="_blank">#2207248</a> (175 upvotes)</p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>Shopify の GraphQL: <code>BillingDocumentDownload</code> と <code>BillDetails</code> query</li>
+                    <li>Sequential な billing document ID を使用</li>
+                    <li>他のショップの billing document (請求書) をダウンロード可能</li>
+                    <li>金額、住所、税情報 等の機密データが漏洩</li>
+                </ol>
+                <p><strong>学び:</strong> Sequential integer ID + GraphQL = 最も simple な IDOR。
+                決済/課金系のデータは PII を含むため severity が高い。</p>
+            </div>
+
+            <h3>Case 5: LibreChat — Cross-user message read (mei-bb 提出)</h3>
+            <div class="card">
+                <p><strong>Report:</strong> <a href="https://huntr.com/bounties/bf497e68-b899-4daf-928c-1669ed8af294" target="_blank">huntr (Pending)</a></p>
+                <p><strong>仕組み:</strong></p>
+                <ol>
+                    <li>LibreChat の <code>GET /api/messages/:conversationId</code></li>
+                    <li>PR #12220 で DELETE に user filter が追加されたが、GET は未修正</li>
+                    <li><code>POST /api/convos/update</code> で <code>conversationId='new'</code> (top-level) + <code>arg.conversationId=victim</code> (handler) の middleware 不一致を利用</li>
+                    <li>Attacker-owned shadow conversation を upsert → victim の message 読み取り</li>
+                </ol>
+                <p><strong>学び:</strong> Incomplete-fix variant (Phase 2 参照)。DELETE は修正されたが GET は未修正。
+                Middleware の URL parameter と handler の body parameter の <strong>不一致</strong> を利用した authorization bypass。
+                AC:H (UUID v4 必要) だが shared link 経由は anonymized 確認済み。</p>
+            </div>
+        </div>
+
+        <!-- テスト自動化 -->
+        <div class="section">
+            <h2>テストの自動化</h2>
+
+            <h3>Burp Suite での手法</h3>
+            <ol>
+                <li><strong>Authorize extension</strong>: 全リクエストを別アカウントのセッションで自動リプレイ</li>
+                <li><strong>AutoRepeater</strong>: パラメータ内の ID を自動で書き換えてリプレイ</li>
+                <li><strong>Intruder</strong>: Sequential ID の範囲スキャン</li>
+            </ol>
+
+            <h3>Authorize の設定</h3>
+<pre><code>1. Account B (被害者) のセッショントークンを Authorize に設定
+2. Account A (攻撃者) で正常操作
+3. 全リクエストが自動的に Account B のトークンでもリプレイされる
+4. Response が同じ (200 OK) = IDOR 可能性あり
+5. Response が異なる (403) = 正常な Access Control</code></pre>
+        </div>
+
+        <!-- Key Takeaways -->
+        <div class="section">
+            <h2>Key Takeaways</h2>
+            <div class="card">
+                <ul>
+                    <li><strong>2アカウント体制</strong>は IDOR テストの必須条件 — 1アカウントでは発見できない</li>
+                    <li><strong>Write > Read</strong>: データ変更/削除 IDOR は Read IDOR より severity が高い</li>
+                    <li><strong>UUID でも IDOR は成立する</strong> — leak 経路 (API response, shared link, error) を探す</li>
+                    <li><strong>Body 内の ID も書き換える</strong> — URL path だけでなく JSON body の user_id, owner_id</li>
+                    <li><strong>GraphQL mutation は温床</strong> — input の owner/user ID に authorization check が不足しがち</li>
+                    <li><strong>Authorize extension</strong>で全リクエストを自動テスト — 手動では見逃す endpoint を拾える</li>
+                    <li><strong>Array parameter trick</strong> — <code>id[]=own&id[]=victim</code> で ORM の挙動差を突く応用テク</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Practice</h2>
+            <h4>Web Security Academy</h4>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/access-control" target="_blank">Access Control Labs (全て)</a></li>
+                <li><a href="https://portswigger.net/web-security/access-control/idor" target="_blank">IDOR Labs</a></li>
+            </ul>
+            <h4>ローカル演習</h4>
+            <ul>
+                <li><code>practice/bb-whitebox-01</code> — TaskFlow API の各 route で user ownership チェックの有無を確認</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>References</h2>
+            <ul>
+                <li><a href="https://portswigger.net/web-security/access-control" target="_blank">PortSwigger: Access Control</a></li>
+                <li><a href="https://owasp.org/Top10/A01_2021-Broken_Access_Control/" target="_blank">OWASP Top 10: Broken Access Control</a></li>
+                <li><a href="https://github.com/KathanP19/HowToHunt/tree/master/IDOR" target="_blank">HowToHunt: IDOR</a></li>
+            </ul>
+        </div>
+
+        <div style="text-align:center; margin: 2rem 0;">
+            <button class="complete-btn" data-module-id="13-idor" onclick="toggleComplete('13-idor')">Mark Complete</button>
+        </div>
+
+        <div class="page-nav">
+            <a href="12-ssrf.html">&larr; 前: SSRF</a>
+            <a href="14-auth-bypass.html">次: Authentication Bypass &rarr;</a>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1f2a3f',primaryTextColor:'#e6edf3',primaryBorderColor:'#30363d',lineColor:'#58a6ff',secondaryColor:'#161b22',tertiaryColor:'#161b22'}});</script>
+    <script src="../assets/progress.js"></script>
+</body>
+</html>
