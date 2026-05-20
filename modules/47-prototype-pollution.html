@@ -61,7 +61,7 @@ obj["__proto__"]["polluted"] = "yes";
 obj["constructor"]["prototype"]["polluted"] = "yes";</code></pre>
 
             <h3>Vulnerable merge/clone Functions</h3>
-            <pre><code>// Vulnerable deep merge (common in lodash < 4.17.12, etc.)
+            <pre><code>// Vulnerable deep merge (common in lodash < 4.17.19, etc.)
 function merge(target, source) {
   for (let key in source) {
     if (typeof source[key] === 'object') {
@@ -228,7 +228,7 @@ https://target.com/page?constructor.prototype.polluted=yes
                     <tr><th>Library</th><th>Function</th><th>Impact</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td>lodash (&lt;4.17.12)</td><td>_.merge, _.defaultsDeep</td><td>Pollution source</td></tr>
+                    <tr><td>lodash (&lt;4.17.19)</td><td>_.merge, _.defaultsDeep</td><td>Pollution source</td></tr>
                     <tr><td>jQuery (&lt;3.4.0)</td><td>$.extend(true, ...)</td><td>Pollution source</td></tr>
                     <tr><td>EJS</td><td>render()</td><td>RCE gadget</td></tr>
                     <tr><td>Pug (Jade)</td><td>compile()</td><td>RCE gadget</td></tr>
@@ -257,7 +257,7 @@ https://target.com/page?constructor.prototype.polluted=yes
         <div class="section">
             <h2>Defense Bypass Techniques</h2>
             <ul>
-                <li><strong>Object.freeze(Object.prototype)</strong> → bypass: use constructor.prototype path</li>
+                <li><strong>Object.freeze(Object.prototype)</strong> → <code>__proto__</code> 経路には有効。実際の bypass は他の prototype chain (例: <code>Array.prototype</code>, <code>Function.prototype</code>) を標的にする</li>
                 <li><strong>Key blacklist (__proto__)</strong> → bypass: <code>constructor.prototype</code>, unicode encoding</li>
                 <li><strong>Object.create(null)</strong> → this IS effective (no prototype chain)</li>
                 <li><strong>Map instead of Object</strong> → this IS effective</li>

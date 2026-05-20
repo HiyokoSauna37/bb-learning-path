@@ -145,8 +145,8 @@ https://target.com/redirect?url=https://target.com/change-email?email=evil
 // SameSite は eTLD+1 で判定
 // sub.target.com に XSS があれば target.com への CSRF 可能
 
-// window.open + Lax (2分ルール)
-// Chrome: Cookie 設定後120秒以内は Lax でも top-level POST で送信
+// window.open + Lax
+// Chrome は SameSite 導入時に120秒の猶予期間を設けていたが、Chrome 104 (2022年) で廃止済み。現在は Lax で cross-site POST の Cookie 送信は不可
 &lt;script&gt;
 window.open('https://target.com/change-email', '_blank');
 // 新しいタブで top-level navigation → Lax Cookie 付与
@@ -198,6 +198,13 @@ window.open('https://target.com/change-email', '_blank');
                     <li>Same-site 内の XSS/Open Redirect からのチェーン</li>
                     <li>Method override による GET→POST 変換</li>
                 </ul>
+            </div>
+
+            <div class="callout">
+                <div class="callout-title">Same-Site ≠ Same-Origin</div>
+                <p>Same-site (eTLD+1 一致) と Same-origin (scheme+host+port 完全一致) は異なる概念。
+                a.example.com と b.example.com は <strong>same-site だが cross-origin</strong>。
+                SameSite Cookie は same-site なら cross-origin でも送信される。CORS は origin 単位で制御。</p>
             </div>
         </div>
 

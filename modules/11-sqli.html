@@ -120,7 +120,8 @@ UPDATE users SET password='newpass' WHERE username='admin'--'
             <h3>6. NoSQL Injection</h3>
             <p>
                 MongoDB, CouchDB 等の NoSQL データベースに対するインジェクション。
-                ORM (Mongoose, Sequelize) を使用していても安全とは限らない。
+                ORM (Mongoose) を使用していても安全とは限らない。
+                なお Sequelize は SQL ORM であり NoSQL ではない。
             </p>
 <pre><code>// MongoDB operator injection
 POST /login

@@ -95,7 +95,7 @@ $argon2id$v=19$m=65536,t=3,p=4$salt$hash</code></pre>
                     <tr>
                         <td><strong>GCM</strong></td>
                         <td>認証付き暗号 (AEAD)</td>
-                        <td>Nonce 再利用で鍵回復可能。正しく使えば安全。</td>
+                        <td>Nonce 再利用で GHASH 認証鍵 (H) が回復可能 (AES 暗号鍵自体は安全)。認証タグ偽造と該当暗号文の復号が可能になる。正しく使えば安全。</td>
                     </tr>
                 </tbody>
             </table>
@@ -109,7 +109,7 @@ flowchart TD
         P3["Block 3: AAAA"] -->|"同じ鍵"| C3["暗号文: XXXX ← 同じ!"]
     end
 
-    subgraph cbc["CBC Mode (安全)"]
+    subgraph cbc["CBC Mode (ECBより安全 (ただし Padding Oracle の脆弱性あり))"]
         IV["IV (ランダム)"] --> X1["XOR"]
         Q1["Block 1: AAAA"] --> X1
         X1 -->|"暗号化"| D1["暗号文: XXXX"]

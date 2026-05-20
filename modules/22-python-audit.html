@@ -102,7 +102,7 @@ class Exploit:
             <h3>YAML unsafe_load</h3>
 <pre><code>import yaml
 
-# 危険: yaml.load without Loader specification (PyYAML &lt; 6.0)
+# 危険: yaml.load without Loader specification (PyYAML &lt; 5.1 (5.1以降は Loader 引数必須、6.0以降はエラー))
 config = yaml.load(request.data)
 
 # 危険: yaml.unsafe_load (明示的に unsafe)

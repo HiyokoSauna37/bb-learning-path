@@ -181,7 +181,7 @@ fetch('https://target.com/api/data', {
                     <li><strong>Bearer Token (Authorization ヘッダー) のみの認証</strong>: CORS はブラウザの Cookie 自動送信を悪用するもの。Authorization ヘッダーは攻撃者のサイトから付与できない</li>
                     <li><strong>Access-Control-Allow-Origin: * (ワイルドカード)</strong>: Credentials: true と同時に使用不可 (ブラウザが拒否)</li>
                     <li><strong>レスポンスに機密データなし</strong>: public API で誰でも取得可能な情報</li>
-                    <li><strong>SameSite=Lax/Strict の Cookie</strong>: cross-origin では Cookie が送信されない</li>
+                    <li><strong>SameSite=Lax/Strict の Cookie</strong>: cross-site では Cookie が送信されない</li>
                     <li><strong>意図的な設計</strong>: embed/widget/OTT サービスで意図的に広いオリジンを許可</li>
                 </ul>
             </div>

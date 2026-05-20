@@ -88,11 +88,11 @@ shell.php5      // PHP 5 で実行
 shell.phtml     // PHP として実行
 shell.phar      // PHP アーカイブ
 shell.php.jpg   // double extension (Apache misconfiguration)
-shell.php%00.jpg  // null byte (古い PHP)
+shell.php%00.jpg  // null byte truncation (PHP 5.3.4 (2010年) で修正済み。現代のPHPでは無効)
 shell.php;.jpg  // semicolon (IIS)
 shell.PhP       // case variation
 shell.php.     // trailing dot (Windows)
-shell.php::$DATA  // NTFS ADS (Windows/IIS)
+shell.php::$DATA  // NTFS ADS (IIS 7+ (2008年〜) のデフォルト Request Filtering でブロック済み。古い IIS 6 以前のみ)
 
 // Apache .htaccess upload
 AddType application/x-httpd-php .abc

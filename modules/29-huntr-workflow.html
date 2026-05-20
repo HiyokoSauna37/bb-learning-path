@@ -39,7 +39,7 @@
                 <li>GitHub リポジトリを直接対象として脆弱性を報告</li>
                 <li>報告は maintainer + huntr triage team が review</li>
                 <li>Accepted されると CVE が発行され、bounty が支払われる</li>
-                <li>Bounty 金額: Critical $1,280 / High $512 / Medium $128 / Low $64 (目安)</li>
+                <li>Bounty 金額: Critical $1,280 / High $512 / Medium $128 / Low $64 (金額はプロジェクトにより異なる。最新は huntr.com で確認)</li>
             </ul>
 
             <div class="callout">
@@ -239,7 +239,7 @@ curl -X GET http://localhost:3000/api/admin/users \
             <ul>
                 <li><strong>Accepted</strong>: CVE 発行 + Bounty。Signal +7</li>
                 <li><strong>Duplicate</strong>: 既に報告済み。Signal 計算から除外 (プラスもマイナスもなし)。HackerOne では Reputation に early +2 / late -5 の別計算あり</li>
-                <li><strong>Informative</strong>: 脆弱性だが severity 不十分。Signal +2</li>
+                <li><strong>Informative</strong>: 脆弱性だが severity 不十分。Signal 0 (neutral)</li>
                 <li><strong>Not Applicable</strong>: 脆弱性ではない。Signal -5</li>
             </ul>
         </div>

@@ -55,17 +55,17 @@
             <table>
                 <thead><tr><th>指標</th><th>値</th></tr></thead>
                 <tbody>
-                    <tr><td>総提出数</td><td>14件 (+ 5件 withdrawn pre-submission)</td></tr>
+                    <tr><td>総提出数</td><td>14件 (+ 6件 withdrawn pre-submission)</td></tr>
                     <tr><td>Duplicate</td><td>4件 (GitLab, Grafana/Loki, Nitro, OPPO)</td></tr>
                     <tr><td>In Review</td><td>1件 (Discourse)</td></tr>
                     <tr><td>Pending Triage</td><td>9件 (LiteLLM, memos, AnythingLLM, Khoj, LibreChat, Flowise, lobe-chat, wger, kotaemon)</td></tr>
                     <tr><td>Bounty 確定</td><td>$0 (まだ resolved なし)</td></tr>
-                    <tr><td>Withdrawn (AI Slop 撤回)</td><td>5件 (vercel/ai, Uber, Pyroscope, immich, Pyroscope)</td></tr>
+                    <tr><td>Withdrawn (AI Slop 撤回)</td><td>6件 (vercel/ai, Uber, Pyroscope, immich, vercel/workflow, NocoDB)</td></tr>
                 </tbody>
             </table>
             <p class="annotation">
                 2ヶ月で $0 だが、Pending 9件 + In Review 1件が控えている。signal 蓄積期間。
-                最重要な学びは「撤回した 5件」から得られている。(数値は 2026-05-17 時点)
+                最重要な学びは「撤回した 6件」から得られている。(数値は 2026-05-17 時点)
             </p>
         </div>
 
@@ -284,7 +284,7 @@
             <div class="card">
                 <h4>2. 撤回は恥ではなく、submit の品質を上げる投資</h4>
                 <p>
-                    6件の pre-submission withdrawal は「submit していたら N/A で signal -5 だった」ケース。
+                    6件 (+ growing) の pre-submission withdrawal は「submit していたら N/A で signal -5 だった」ケース。
                     Self-audit gate (bb-aislop-gate, bb-fp-detector, bb-auth-doc-audit) を通すことで
                     submit 精度が上がり、triage 側の信頼も得られる。
                 </p>

@@ -34,7 +34,7 @@
             <p>問題: deserialization 時にオブジェクトのコンストラクタやマジックメソッドが<strong>自動実行</strong>される言語がある。攻撃者が serialized data を制御できれば、任意のオブジェクトを生成させ、RCE に到達できる。</p>
 
             <div class="callout danger">
-                <div class="callout-title">OWASP A8:2017 / CWE-502</div>
+                <div class="callout-title">OWASP A08:2021 (Software and Data Integrity Failures) / CWE-502</div>
                 <p>Insecure Deserialization は CVSS 9.8 (Critical) クラスの脆弱性。発見 = 即 High/Critical report。</p>
             </div>
         </div>
@@ -123,7 +123,7 @@ payload = pickle.dumps(Exploit())
 # このpayload を target に送り、pickle.loads() させれば RCE
 
 # yaml: !!python/object で任意クラスをインスタンス化
-# PyYAML &lt; 6.0 の yaml.load() (Loader 未指定) で発火
+# PyYAML &lt; 5.1 の yaml.load() (Loader 未指定) で発火 (5.1以降は Loader 引数必須、6.0以降はエラー)
 payload = """
 !!python/object/apply:os.system
 - "id"

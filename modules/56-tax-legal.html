@@ -62,7 +62,7 @@
             <div class="tax-card">
                 <h4>所得区分</h4>
                 <ul>
-                    <li>BB 報酬は「雑所得」に分類（事業所得にするには開業届が必要）</li>
+                    <li>BB 報酬は「雑所得」に分類（副業レベルの場合。継続的・組織的に行う場合は事業所得に分類される可能性がある。事業所得にするには開業届が必要）</li>
                     <li>雑所得 = 収入金額 - 必要経費</li>
                     <li>為替レート: 受取日の TTB レート（外貨建ての場合）</li>
                     <li>HackerOne は USD 建て → PayPal/銀行送金時のレートで計算</li>
@@ -80,7 +80,7 @@
                     <li>US platform (HackerOne, Bugcrowd) から bounty を受け取る場合に必要</li>
                     <li>W-8BEN = 「非居住外国人」の申告書。日米租税条約の適用を受けるため</li>
                     <li>未提出の場合: 30% の源泉徴収が適用される</li>
-                    <li>提出済みの場合: 日米租税条約により 0% (royalties/services の場合)</li>
+                    <li>提出済みの場合: 条約条項の適用により軽減される可能性がある (0%保証ではない)</li>
                 </ul>
             </div>
 
@@ -89,7 +89,7 @@
                 <ol>
                     <li>HackerOne / Bugcrowd の Tax Settings で W-8BEN フォームに記入</li>
                     <li>マイナンバー (Individual TIN) を記入</li>
-                    <li>Treaty country: Japan, Article: 7 (Business Profits) or 22 (Other Income)</li>
+                    <li>Treaty country: Japan, Article: 7 (Business Profits) or 22 (Other Income)。適用条約条項は BB 収入の分類により異なり確定的ではない。税理士に相談を推奨。</li>
                     <li>有効期限: 3年。期限切れ前に更新が必要</li>
                 </ol>
             </div>
@@ -172,7 +172,7 @@
                 <li><strong>経費記録:</strong> 日付、金額、用途、領収書の保管</li>
                 <li><strong>Submission log:</strong> 提出日、program、result、bounty 金額 (mei-bb の <code>_submission_log.md</code>)</li>
                 <li><strong>年間集計:</strong> 12月末に年間収支を確定。20万円超なら確定申告準備</li>
-                <li><strong>保管期間:</strong> 5年間（税務調査に備えて）</li>
+                <li><strong>保管期間:</strong> 5年間 (事業所得に再分類された場合は7年間。安全のため7年間推奨)</li>
             </ul>
         </div>
 

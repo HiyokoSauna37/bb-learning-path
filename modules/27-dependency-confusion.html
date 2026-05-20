@@ -36,7 +36,7 @@
             <ol>
                 <li>Target が <code>@company/internal-utils</code> を private registry から使用</li>
                 <li>Attacker が <code>internal-utils</code> (scope なし) を npm public registry に高バージョンで publish</li>
-                <li>Package manager が「higher version wins」ルールで public 版を install</li>
+                <li>Package manager が public 版を install (pip の場合は <code>--extra-index-url</code> 指定時に「higher version wins」ルール。npm の場合は private registry に package が見つからない時の public registry fallback が原因で、version 比較ではない)</li>
                 <li>Attacker の package の <code>preinstall</code> script が実行される → RCE</li>
             </ol>
 

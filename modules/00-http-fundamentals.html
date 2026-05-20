@@ -207,7 +207,7 @@ flowchart LR
                     <tr><td><code>404</code></td><td>Not Found</td><td>endpoint 存在しない OR hidden endpoint</td></tr>
                     <tr><td><code>405</code></td><td>Method Not Allowed</td><td>他の Method を試す手がかり</td></tr>
                     <tr><td><code>500</code></td><td>Internal Server Error</td><td>入力処理の異常 → Injection 系のシグナル</td></tr>
-                    <tr><td><code>502/503</code></td><td>Bad Gateway / Unavailable</td><td>Backend 到達 → SSRF 成功のシグナル</td></tr>
+                    <tr><td><code>502/503</code></td><td>Bad Gateway / Unavailable</td><td>Backend への接続試行を示唆するが、SSRF 成功の確証ではない。DNS callback 等で別途確認が必要</td></tr>
                 </tbody>
             </table>
 
@@ -243,7 +243,7 @@ flowchart LR
                 <li><strong>Binary framing</strong> — テキストではなくバイナリフレーム。手動での改ざんが難しい</li>
                 <li><strong>Multiplexing</strong> — 1つの TCP 接続で複数のリクエストを並行処理</li>
                 <li><strong>Header compression (HPACK)</strong> — ヘッダの圧縮</li>
-                <li><strong>Server Push</strong> — サーバーからのリソース先行送信</li>
+                <li><strong>Server Push</strong> — サーバーからのリソース先行送信 (Chrome 106 で廃止、現在は実質的に使われていない)</li>
             </ul>
 
             <div class="callout warning">
