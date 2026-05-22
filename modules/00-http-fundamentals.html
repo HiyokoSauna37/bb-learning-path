@@ -81,8 +81,10 @@ sequenceDiagram
     participant B as Browser (Client)
     participant S as Server
 
-    B->>S: HTTP Request<br/>GET /api/users HTTP/1.1<br/>Host: example.com<br/>Cookie: session=abc
-    S->>B: HTTP Response<br/>200 OK<br/>Content-Type: application/json<br/>Set-Cookie: session=xyz<br/><br/>{"users": [...]}
+    B->>S: HTTP Request (GET /api/users)
+    Note right of B: GET /api/users HTTP/1.1<br>Host: example.com<br>Cookie: session=abc
+    S->>B: HTTP Response (200 OK)
+    Note left of S: 200 OK<br>Content-Type: application/json<br>Set-Cookie: session=xyz<br>Body: {"users": [..]}
 
     Note over B,S: これが全てのWeb通信の基本形
             </div>

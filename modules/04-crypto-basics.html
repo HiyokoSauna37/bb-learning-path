@@ -109,7 +109,7 @@ flowchart TD
         P3["Block 3: AAAA"] -->|"同じ鍵"| C3["暗号文: XXXX ← 同じ!"]
     end
 
-    subgraph cbc["CBC Mode (ECBより安全 (ただし Padding Oracle の脆弱性あり))"]
+    subgraph cbc["CBC Mode - ECBより安全, ただし Padding Oracle の脆弱性あり"]
         IV["IV (ランダム)"] --> X1["XOR"]
         Q1["Block 1: AAAA"] --> X1
         X1 -->|"暗号化"| D1["暗号文: XXXX"]

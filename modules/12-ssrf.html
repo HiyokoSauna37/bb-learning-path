@@ -57,12 +57,12 @@
 sequenceDiagram
     participant Attacker as 攻撃者
     participant Server as 脆弱サーバー
-    participant Meta as 内部メタデータ<br/>(169.254.169.254)
+    participant Meta as 内部メタデータ
 
-    Attacker->>Server: POST /fetch<br/>url=http://169.254.169.254/metadata
+    Attacker->>Server: POST /fetch (url=metadata endpoint)
     Note over Server: URLをそのままfetch
-    Server->>Meta: GET /latest/meta-data/iam/security-credentials/
-    Meta->>Server: AWS AccessKeyId + SecretAccessKey + Token
+    Server->>Meta: GET /latest/meta-data/iam/...
+    Meta->>Server: AccessKeyId + SecretAccessKey + Token
     Server->>Attacker: Response (credentials漏洩)
     Note over Attacker: AWS CLIで横展開可能
             </div>

@@ -157,7 +157,7 @@ sequenceDiagram
     participant S as Server
 
     A->>V: 悪意あるURLを送信
-    Note over A,V: https://target.com/search?q=&lt;script&gt;...
+    Note over A,V: target.com/search?q=payload
     V->>S: URLをクリック
     S->>V: 入力をそのまま反射したHTML
     Note over V: ブラウザでscript実行
@@ -187,15 +187,15 @@ sequenceDiagram
             <div class="mermaid">
 flowchart TD
     Start[入力がレスポンスに反射された] --> C1{どこに出力?}
-    C1 -->|HTML body| B1["&lt;script&gt; or &lt;img onerror&gt;"]
-    C1 -->|HTML属性内| B2["&quot; onfocus=alert(1)"]
+    C1 -->|HTML body| B1["script tag or img onerror"]
+    C1 -->|HTML属性内| B2["quote + onfocus=alert 1"]
     C1 -->|JS文字列内| B3["'; alert(1); //"]
     C1 -->|URL/href属性| B4["javascript:alert(1)"]
     C1 -->|CSS内| B5["ほぼ不可能 (現代ブラウザ)"]
 
     B1 --> F1{フィルター?}
     F1 -->|なし| XSS([XSS成功])
-    F1 -->|script blocked| B1b["&lt;svg/onload&gt; &lt;details/ontoggle&gt;"]
+    F1 -->|script blocked| B1b["svg/onload, details/ontoggle"]
     B1b --> XSS
 
     B2 --> F2{引用符?}
@@ -213,19 +213,19 @@ flowchart TD
 sequenceDiagram
     participant A as Attacker
     participant S as Vulnerable Server
-    participant M as Cloud Metadata<br/>(169.254.169.254)
+    participant M as Cloud Metadata
     participant I as Internal Service
 
-    A->>S: POST /api/fetch-url<br/>url=http://169.254.169.254/...
+    A->>S: POST /api/fetch-url (metadata URL)
     Note over S: URL validation check
     S->>M: GET /latest/meta-data/iam/...
-    M->>S: IAM Credentials (AccessKey, Secret)
+    M->>S: IAM Credentials
     S->>A: Response with credentials
 
-    Note over A: 取得した credentials で...
+    Note over A: 取得した credentials で横展開
 
     A->>I: AWS API call (S3, EC2, etc.)
-    Note over A,I: 内部リソースへの<br/>フルアクセス
+    Note over A,I: 内部リソースへのフルアクセス
             </div>
 
             <h3 style="margin-top:1.5rem;">SSRF Bypass テクニック判定</h3>
@@ -235,9 +235,9 @@ flowchart TD
     V1 -->|なし| Direct([直接アクセス])
     V1 -->|あり| T1{何をブロック?}
 
-    T1 -->|127.0.0.1 文字列| IP["代替表記:<br/>0x7f000001, 2130706433,<br/>[::1], 127.1"]
-    T1 -->|Private IP全般| DNS["DNS Rebinding:<br/>1st=外部IP → 2nd=内部IP"]
-    T1 -->|全内部IP| Redir["Open Redirect経由:<br/>allowed.com → 127.0.0.1"]
+    T1 -->|127.0.0.1 文字列| IP["代替表記:<br>0x7f000001, 2130706433,<br>::1, 127.1"]
+    T1 -->|Private IP全般| DNS["DNS Rebinding:<br>1st=外部IP, 2nd=内部IP"]
+    T1 -->|全内部IP| Redir["Open Redirect経由:<br>allowed.com to 127.0.0.1"]
 
     IP --> Check{通った?}
     DNS --> Check
@@ -247,7 +247,7 @@ flowchart TD
     Check -->|No| Proto{Protocol変更?}
     Proto -->|gopher://| G["Redis/SMTP操作"]
     Proto -->|file://| F["/etc/passwd 読み取り"]
-    Proto -->|どれも不可| Report["Blind SSRF として報告<br/>(OOB証明)"]
+    Proto -->|どれも不可| Report["Blind SSRF として報告<br>OOB証明"]
             </div>
         </div>
 
@@ -286,22 +286,22 @@ flowchart TD
             <p>正常フロー (上) と攻撃ポイント (赤) を重ねて表示。</p>
             <div class="mermaid">
 sequenceDiagram
-    participant U as User (Browser)
+    participant U as User Browser
     participant C as Client App
-    participant AS as Auth Server<br/>(Google, GitHub等)
+    participant AS as Auth Server
     participant RS as Resource Server
 
     U->>C: 1. Login ボタンクリック
     C->>U: 2. Auth Server へリダイレクト
-    Note right of C: redirect_uri=https://app.com/callback<br/>🔴 Open Redirect で<br/>redirect_uri を攻撃者URLに
+    Note right of C: redirect_uri 指定<br>攻撃: Open Redirect で<br>redirect_uri を書き換え
 
     U->>AS: 3. ログイン + 同意
     AS->>U: 4. Authorization Code 付きリダイレクト
-    Note right of AS: code=abc123<br/>🔴 Code が Referer 漏洩<br/>🔴 CSRF で被害者の code 奪取
+    Note right of AS: code=abc123<br>攻撃: Referer 漏洩<br>攻撃: CSRF で code 奪取
 
     U->>C: 5. callback?code=abc123
-    C->>AS: 6. Code → Token 交換
-    Note right of C: client_secret 使用<br/>🔴 client_secret 漏洩チェック
+    C->>AS: 6. Code to Token 交換
+    Note right of C: client_secret 使用<br>攻撃: secret 漏洩チェック
 
     AS->>C: 7. Access Token 返却
     C->>RS: 8. Token で API アクセス
@@ -318,14 +318,14 @@ sequenceDiagram
     participant V as Victim Browser
     participant T as Target Server
 
-    Note over V: Victim は Target にログイン済み<br/>(Session Cookie保持)
+    Note over V: Victim は Target にログイン済み<br>Session Cookie 保持
 
     V->>A: 攻撃者サイトを訪問
     A->>V: 自動送信フォームを返す
-    Note over A,V: &lt;form action="target.com/transfer"&gt;<br/>&lt;input name="to" value="attacker"&gt;<br/>&lt;input name="amount" value="10000"&gt;
+    Note over A,V: hidden form で<br>to=attacker, amount=10000<br>を自動 POST
 
     V->>T: POST /transfer (Cookie自動送信)
-    Note over V,T: 🔴 SameSite=None の場合<br/>Cookie が自動付与される
+    Note over V,T: SameSite=None の場合<br>Cookie が自動付与される
 
     T->>T: 正規リクエストとして処理
     T->>V: 200 OK (送金完了)
@@ -426,10 +426,10 @@ flowchart TD
     Read --> Q2
     Q2 -->|Yes| Q3{By-feature<br/>= 仕様通り?}
 
-    Q3 -->|Yes| W2["❌ Withdraw<br/>(Pyroscope/immich 事例)"]
+    Q3 -->|Yes| W2["❌ Withdraw<br>Pyroscope/immich 事例"]
     Q3 -->|No/Unclear| Q4{Cross-OS 検証<br/>した?}
 
-    Q4 -->|Win only| W3["❌ Withdraw<br/>(vercel/ai trailing-dot 事例)"]
+    Q4 -->|Win only| W3["❌ Withdraw<br>vercel/ai trailing-dot 事例"]
     Q4 -->|Linux でも再現| Q5{Dup Zone?}
 
     Q5 -->|Known dup zone| W4["❌ Withdraw or<br/>別 sink を探す"]

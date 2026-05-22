@@ -38,10 +38,10 @@
             <div class="mermaid">
 sequenceDiagram
     participant C as Your PC
-    participant R as Recursive Resolver<br/>(ISP/8.8.8.8)
+    participant R as Recursive Resolver
     participant Root as Root Server
     participant TLD as .com TLD Server
-    participant Auth as example.com<br/>Authoritative
+    participant Auth as Authoritative NS
 
     C->>R: example.com の IP は?
     R->>Root: example.com は?
@@ -52,7 +52,7 @@ sequenceDiagram
     Auth->>R: 93.184.216.34 (TTL: 300s)
     R->>C: 93.184.216.34
 
-    Note over C,R: この結果は300秒キャッシュされる<br/>→ DNS Rebinding はこのTTLを0にして<br/>2回目の解決で別IPを返す
+    Note over C,R: 結果は300秒キャッシュ<br>DNS Rebinding はTTL=0で<br>2回目に別IPを返す
             </div>
 <pre><code># ユーザーが "app.example.com" にアクセス
 1. Browser → OS Stub Resolver (hosts file, cache 確認)
@@ -185,13 +185,13 @@ sequenceDiagram
 
     C->>S: ClientHello (対応する暗号方式一覧)
     S->>C: ServerHello + 証明書
-    Note over C: 証明書を検証<br/>(CA署名確認, 有効期限, ドメイン一致)
+    Note over C: 証明書を検証<br>CA署名確認, 有効期限, ドメイン一致
     C->>S: Pre-master secret (公開鍵で暗号化)
     Note over C,S: 両者が同じ session key を導出
     C->>S: 暗号化通信開始
     S->>C: 暗号化通信
 
-    Note over C,S: 以降の全HTTPは暗号化される<br/>→ 中間者は内容を読めない
+    Note over C,S: 以降の全HTTPは暗号化される<br>中間者は内容を読めない
             </div>
 
             <div class="callout">
