@@ -20,6 +20,15 @@
         }
         .complete-btn:hover { background: var(--green); color: #000; }
         .complete-btn.is-complete { background: var(--green); color: #000; }
+        #body-formats { scroll-margin-top: 1rem; }
+        .body-formats table { table-layout: fixed; }
+        .body-formats th, .body-formats td { overflow-wrap: anywhere; vertical-align: top; }
+        .body-formats details { border-bottom: 1px solid var(--border); padding: .65rem 0; }
+        .body-formats summary { cursor: pointer; color: var(--accent); }
+        .body-formats details p { margin-top: .5rem; }
+        @media (max-width: 600px) {
+            .body-formats th, .body-formats td { padding: .4rem; }
+        }
     </style>
 </head>
 <body>
@@ -37,6 +46,8 @@
                 <span class="tag tag-theory">Theory</span>
             </div>
         </div>
+
+        <p class="breadcrumb">このページの早見表　<a href="#body-formats">Body Formats（HTTP 本文の形式）</a></p>
 
         <!-- Glossary -->
         <div class="section">
@@ -152,19 +163,53 @@ DELETE /api/sessions/abc HTTP/1.1</code></pre>
                 </tbody>
             </table>
 
-            <h3>Body Formats</h3>
-            <h4>application/x-www-form-urlencoded</h4>
-<pre><code>username=admin&password=hunter2&remember=true</code></pre>
-            <p>HTMLフォームのデフォルト。key=value を <code>&</code> で連結。URL encoding が必要。</p>
+            <section class="body-formats" aria-labelledby="body-formats">
+                <h3 id="body-formats">Body Formats — HTTP 本文の形式</h3>
+                <p>注文画面で「Green Tea を2個」と入力したとき、サーバーにはどんな文字やバイトが届くだろう？ <strong>Body（本文）</strong>は実際に送るデータ、<strong>Content-Type</strong> は受け手にその読み方を伝えるヘッダー。同じ注文でも、送信側と受信側で決めた形式によって本文の書き方が変わる。</p>
 
-            <h4>multipart/form-data</h4>
-<pre><code>------WebKitFormBoundary7MA4YWxkTrZu0gW
-Content-Disposition: form-data; name="file"; filename="shell.php"
-Content-Type: image/png
+                <h4>まず JSON とフォームを見比べる</h4>
+                <p>どちらも同じ注文のリクエストから抜き出したもの。HTTP/1.1 では、ヘッダーと本文の間に空行が1行入る。</p>
+<pre><code>Content-Type: application/json
 
-&lt;?php system($_GET['cmd']); ?&gt;
-------WebKitFormBoundary7MA4YWxkTrZu0gW--</code></pre>
-            <p>ファイルアップロードで使用。<span class="keyword">boundary</span> で各フィールドを区切る。</p>
+{"item":"Green Tea","qty":2}</code></pre>
+<pre><code>Content-Type: application/x-www-form-urlencoded
+
+item=Green+Tea&amp;qty=2</code></pre>
+                <p>JSON の <code>2</code> は数値。フォームの <code>qty=2</code> は文字列の値として届き、個数として使うときにアプリが数値に変換する。フォーム例の <code>+</code> は空白を表す。商品名に文字どおりの <code>+</code> があれば <code>%2B</code> と書く。</p>
+
+                <h4>よく見る6形式の早見表</h4>
+                <table>
+                    <thead><tr><th scope="col">形式と Content-Type</th><th scope="col">本文の見た目</th><th scope="col">よく使う場面</th></tr></thead>
+                    <tbody>
+                        <tr><th scope="row">JSON<br><code>application/json</code></th><td><code>{"qty":2}</code> のように名前と値を組にする。配列や真偽値も表せる。</td><td>Web アプリから API へ注文を送る</td></tr>
+                        <tr><th scope="row">URL エンコードフォーム<br><code>application/x-www-form-urlencoded</code></th><td><code>item=Green+Tea&amp;qty=2</code> のように項目を &amp; でつなぐ。</td><td>HTML フォームを POST するときの既定形式</td></tr>
+                        <tr><th scope="row">マルチパートフォーム<br><code>multipart/form-data</code></th><td>区切り線で項目を分ける。各パートに名前が付き、ファイルのバイトも入る。</td><td>領収書と注文番号を一緒にアップロードする</td></tr>
+                        <tr><th scope="row">プレーンテキスト<br><code>text/plain</code></th><td><code>Green Tea を2個</code> といった文字列。項目の区切り方や型は形式に含まれない。</td><td>メモの本文だけを送る</td></tr>
+                        <tr><th scope="row">XML<br><code>application/xml</code></th><td><code>&lt;order&gt;&lt;qty&gt;2&lt;/qty&gt;&lt;/order&gt;</code> のように要素をタグで囲む。</td><td>XML を指定する外部システムと注文を連携する</td></tr>
+                        <tr><th scope="row">バイナリ<br><code>application/octet-stream</code></th><td>ファイルなどのバイト列が本文全体を占める。形式が分かっていれば <code>image/png</code> など具体的な型も使える。</td><td>アップロード用 URL にファイル1個をそのまま送る</td></tr>
+                    </tbody>
+                </table>
+                <details><summary>マルチパートの実物を見る　注文番号＋領収書</summary>
+<pre><code>Content-Type: multipart/form-data; boundary=order-part
+
+--order-part
+Content-Disposition: form-data; name="order_id"
+
+42
+--order-part
+Content-Disposition: form-data; name="receipt"; filename="receipt.txt"
+Content-Type: text/plain
+
+Green Tea x 2
+--order-part--</code></pre>
+                    <p>最初の Content-Type は本文全体の形式を示す。本文では <code>--</code> と boundary の値を合わせた行が各項目の始まり。最後の区切り行は末尾にも <code>--</code> が付く。ファイルのパートにある <code>text/plain</code> は領収書だけの形式。</p>
+                </details>
+
+                <h4>表を隠して思い出す</h4>
+                <details><summary>① JSON の数値 2 と文字列 "2" は、フォームではどう見える？</summary><p>どちらもフォームの値として送ると <code>qty=2</code>。フォーム本文だけでは元の型を区別できない。JSON では引用符の有無で区別できる。</p></details>
+                <details><summary>② 注文番号と PDF を1回で送る場合と、PDF のバイトだけを送る場合は？</summary><p>前者には <code>multipart/form-data</code> が使える。後者は PDF を直接受け取る API なら <code>application/pdf</code>。どちらもファイルを送れるので、本文全体がファイルなのか、複数の項目の一つなのかを見る。</p></details>
+                <details><summary>③ GET /orders?qty=2 に本文がない。qty はどこに届いた？</summary><p><code>?</code> 以降の URL クエリに届いた。<code>qty=2</code> という見た目はフォーム本文と同じでも、置き場所が違う。開発者ツールの Network では Request URL、Request Headers の Content-Type、Payload の順に見ると切り分けられる。</p></details>
+            </section>
 
             <div class="callout warning">
                 <div class="callout-title">BB視点: Content-Type switching</div>
