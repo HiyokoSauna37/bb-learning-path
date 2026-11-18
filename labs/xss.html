@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>XSS 表示検証ドリル</title><link rel="stylesheet" href="../assets/style.css"></head>
+<body><main class="container"><a href="../modules/10-xss.html">← XSS 教材</a>
+<h1>XSS 表示検証ドリル</h1>
+<p>表示先に合う処理を予想し、入力を変えて確かめよう。検索結果・リンク・整形済み本文の3種類の表示を比較できます。</p>
+<p><a href="xss-flow.html">入力元と表示先を追うデータフロー実習へ</a>。この12問の太字表示は教材独自の記法です。HTML サニタイザーはデータフロー実習の第4問で扱います。</p>
+<label>問題 <select id="task"></select></label>
+<section class="section"><h2 id="title"></h2><p id="prompt"></p>
+<label>検証する値 <input id="sample" size="36"></label>
+<p><label>この画面の要件を満たす処理 <select id="choice"><option value="">選択してください</option><option value="text">文字をそのまま表示</option><option value="url">HTTPS の絶対 URL のみリンク化</option><option value="bold">太字だけを許可して表示</option></select></label></p>
+<button id="run">予想を採点して表示を確認</button>
+<p id="feedback" role="status"></p><div id="preview"></div></section></main>
+<script src="xss.js"></script></body></html>

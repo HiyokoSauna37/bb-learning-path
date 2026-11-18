@@ -211,8 +211,7 @@ done</code></pre>
         <div class="section">
             <h2>DOM XSS: Source/Sink Analysis</h2>
             <p>
-                DOM-based XSS はサーバーを経由せず、JS 内で source (入力) が sink (危険な出力) に
-                到達することで発生する。
+                DOM-based XSS では、ブラウザー側の JS が外部入力を実行可能な文脈に渡す。source は URL のフラグメントのほか、サーバーから受け取った API 応答にもあり得る。
             </p>
 
             <h3>Sources (攻撃者が制御可能な入力)</h3>

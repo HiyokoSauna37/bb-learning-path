@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>XSS のデータフロー実習</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .section label { display: block; margin: .7rem 0; }
+        .section :is(input, select, button) { font: inherit; max-width: 100%; padding: .25rem .5rem; }
+        .section output { display: block; overflow-wrap: anywhere; }
+        .section pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+        .section summary { cursor: pointer; color: var(--accent); }
+    </style>
+    <script defer src="vendor/dompurify/purify.min.js"></script>
+    <script defer src="xss-flow.js"></script>
+</head>
+<body><main class="container">
+    <nav class="breadcrumb"><a href="../modules/10-xss.html">XSS 教材</a> ／ データフロー実習</nav>
+    <header class="page-header"><h1>XSS のデータフロー実習</h1>
+        <p>検索語に <code>&lt;b&gt;京都&lt;/b&gt;</code> と入れたら、レスポンスに何が届き、画面には何が出るだろう？ 入力元、途中の処理、最後に値を解釈する場所を順に記録しよう。</p>
+    </header>
+    <section class="section" id="http">
+        <h2>検索と掲示板で、入力が届くリクエストを比べる</h2>
+        <p>この2題では実際にHTTPを送受信する。リポジトリのルートで次を実行し、画面を開く。Python 3 の標準ライブラリだけで動く。</p>
+        <pre><code>python3 labs/xss_http.py</code></pre>
+        <p><a href="http://127.0.0.1:8765/" target="_blank" rel="noopener">ローカルの検索・掲示板を開く</a>。開発者ツールの Network でログを保持し、各リクエストの Response と画面を見比べる。</p>
+        <h3>1. Reflected の経路</h3>
+        <p>検索語を送る。URL、レスポンスの samp 要素の中身、表示された文字を記録する。URL からクエリを消して再読込すると、どの値が消えるか？</p>
+        <details><summary>観察結果と照合する</summary><p>GET の q が source。サーバーが HTML 本文用にエンコードし、レスポンスに &amp;lt;b&amp;gt; が入る。ブラウザーは &lt;b&gt; の3文字をテキストとして表示する。入力を含まない次のリクエストに検索語は引き継がれない。入力の反射だけでは XSS の証拠にならない。</p></details>
+        <h3>2. Stored の経路</h3>
+        <p>同じ値を投稿する。POST と、その後の GET のどちらに入力欄の値が含まれるか？ 別タブで /notes を開き、検索と同じ操作で表示が消えるか比べよう。</p>
+        <details><summary>観察結果と照合する</summary><p>POST 本文から受け取った値をサーバーがメモリーに保存する。303 に続く GET には投稿本文が含まれないが、レスポンスには投稿が載る。出力時に HTML エンコードするので文字として読める。タブを閉じても残り、サーバーを停止すると消える。</p></details>
+        <h3>比較課題　同じ投稿を JavaScript で読んだら？</h3>
+        <p>投稿したあと、<a href="http://127.0.0.1:8765/reader" target="_blank" rel="noopener">JSON 版の投稿一覧</a>を開く。Network で /reader と /api/notes のどちらの応答に本文があるか予想し、Elements の li と比較する。</p>
+        <details><summary>2つの投稿一覧で sink はどう変わった？</summary><p>/notes の HTML 版はサーバーがエンコードして本文を返す。/reader の最初の HTML には空のリストがあり、投稿本文は別の JSON 応答にある。ブラウザーが response.json() で読み、各 li の textContent に代入する。データの保存場所は同じでも、最後に表示を作る場所が異なる。</p></details>
+    </section>
+    <section class="section" id="dom">
+        <h2>3. DOM-based の経路をブラウザーで追う</h2>
+        <p>次の操作は、このページを直接開くだけで試せる。フラグメントに値を入れ、URL をコピーして別タブで開こう。表示の復元に使われた source と sink を予想する。</p>
+        <form id="fragment-form"><label>URL に載せる文字 <input id="fragment-value" value="&lt;b&gt;京都&lt;/b&gt;" maxlength="300"></label><button>フラグメントを更新</button></form>
+        <p>画面の表示</p><output id="fragment-output"></output>
+        <pre id="fragment-trace" aria-live="polite"></pre>
+        <details><summary>なぜ検索結果と同じ見た目になる？</summary><p>ここでは location.hash を URLSearchParams で読み、output.textContent に代入した。URL のデコードはサニタイズではない。HTTP 配信時にも # 以降はサーバーに送られず、表示を変えるのはブラウザーのコード。API が返した保存済みコメントを JavaScript が描画する設計なら、Stored と DOM-based の両方の観点で調べる。</p></details>
+    </section>
+    <section class="section" id="sanitize">
+        <h2>4. Sanitizer が残すノードと属性を予想する</h2>
+        <p>編集者は強調と斜体を使える。色や注釈属性は引き継がない。この要件で、入力をテキスト表示した場合と HTML をサニタイズした場合の違いを調べよう。</p>
+        <form id="sanitize-form"><label>編集者の原稿 <select id="markup"><option>強調に注釈属性がある原稿</option><option>斜体と下線を含む原稿</option><option>山括弧を文字で書いた原稿</option></select></label>
+            <pre id="raw"></pre>
+            <label>許可するタグ <select id="policy"><option value="both">strong と em</option><option value="strong">strong のみ</option></select></label>
+            <button>ポリシーを適用</button></form>
+        <div id="sanitized-results" hidden>
+            <p>テキスト表示（textContent）</p><output id="plain"></output>
+            <p>サニタイズ後の表示（DocumentFragment を挿入）</p><output id="rich"></output>
+            <p>表示先に残った DOM の HTML 表現</p><pre id="sanitized-tree"></pre>
+        </div>
+        <details><summary>なぜタグが消えても中の文字は残る？</summary><p><a href="https://github.com/cure53/DOMPurify">DOMPurify</a> に許可タグを指定し、属性・data 属性・ARIA 属性を許可しない設定で処理している。この原稿では許可外の装飾が外れ、中の文字は残る。HTML エンコードなら許可したタグも文字として表示される。URL の接続先や JavaScript としての安全性はこのポリシーの対象外。</p></details>
+        <p><a href="../modules/10-xss.html#html-sanitizers">同じ許可ポリシーを別の環境で実装するには？ HTML サニタイザー5種の比較</a></p>
+    </section>
+    <section class="section" id="mutation">
+        <h2>5. Mutation XSS の前提になる再解析を観察する</h2>
+        <p>校正済みの表を別の欄に転記する場面を考える。行を HTML 文字列に戻し、異なる親要素のもとで再解析したら、元の行と同じ DOM になるだろうか？</p>
+        <label>再解析する親要素 <select id="parent"><option>tbody</option><option>table</option><option>div</option></select></label>
+        <button id="parse" type="button">転記前後を比較</button>
+        <pre id="trees" aria-live="polite"></pre>
+        <details><summary>観察から何を判断できる？</summary><p>tbody では行が残り、table では tbody が補われ、div ではセルの文字だけが残る。同じ文字列でもパーサーの文脈で DOM は変わる。この例で変化するのは表の構造だけ。mXSS と判断するには、再解析や正規化により、許可されていない実行可能な構造が生じることが条件になる。修正後は表示先の実際の DOM で許可タグ・属性を確認し、サニタイズ済みノードを文字列に戻す工程を減らす。</p></details>
+    </section>
+    <nav class="page-nav"><a href="xss.html">表示方法を選ぶ12問</a><a href="../quizzes/q-10-xss.html">理解度を5問で確認 →</a></nav>
+</main></body></html>
