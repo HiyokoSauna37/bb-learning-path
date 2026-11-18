@@ -63,7 +63,33 @@
                 </tbody>
             </table>
             <p>Reflected と Stored は<strong>値がいつ届くか</strong>、DOM-based は<strong>どのコードが解釈先を選ぶか</strong>、Mutation は<strong>解析の前後で何が変わるか</strong>という問い。保存されたコメントを API が返し、フロントエンドが HTML として挿入する場合は、Stored と DOM-based が同時に当てはまる。</p>
-            <p><a href="../labs/xss-flow.html">データフロー実習を始める</a> ／ <a href="#academy-coverage">Academy との対応を見る</a></p>
+            <p><a href="../labs/xss-flow.html">データフロー実習を始める</a> ／ <a href="#academy-coverage">Academy との対応を見る</a> ／ <a href="#xss-reading-guide">公式資料で深く学ぶ</a></p>
+        </section>
+
+        <section class="section" aria-labelledby="xss-reading-guide">
+            <h2 id="xss-reading-guide">公式資料で深く学ぶ　1件の投稿を表示まで追う</h2>
+            <p>注文の備考に <code>&lt;b&gt;要冷蔵&lt;/b&gt;</code> と入力した人がいる。仕様では「一覧には入力した文字をそのまま表示し、詳細では太字だけを許す」。この備考が保存され、API から返り、2つの画面に届くまでを考えてみよう。</p>
+
+            <h3>① JSON を読むと、文字列はどうなる？</h3>
+            <p>API の <code>Content-Type: application/json</code> は HTTP 本文の読み方を示す。<code>response.json()</code> の後、備考フィールドは山括弧を含む文字列になる。ブラウザーがその値を次にどう使うかは別の判断だ。一覧のセルに <code>cell.textContent = order.note</code> と代入すれば、山括弧まで文字として表示される。Network の応答と Elements のセルを見比べよう。<a href="00-http-fundamentals.html#body-formats">Body Formats の復習</a> ／ <a href="https://developer.mozilla.org/ja/docs/Web/Security/Attacks/XSS#文書コンテキスト">MDN 日本語版「文書コンテキスト」</a></p>
+
+            <h3>② Stored と DOM-based が同時に当てはまるのはなぜ？</h3>
+            <p>注文者が昨日書いた備考を、担当者が今日開く。ここで分かるのは保存と閲覧の経路。担当者の画面で最初の HTML に空のセルしかなく、後続の API 応答から JavaScript がセルを作るなら、表示先を決めるのはクライアント側だ。その処理が入力を実行可能な構造として解釈させた場合、Stored DOM XSS と説明できる。保存や反射を観察しただけでは、実行可能性までは判断できない。<a href="https://portswigger.net/web-security/cross-site-scripting/dom-based#dom-xss-combined-with-reflected-and-stored-data">PortSwigger「DOM XSS combined with reflected and stored data」</a></p>
+
+            <h3>③ React の通常表示とリッチテキストで、レビュー箇所はどう変わる？</h3>
+            <p>一覧で <code>&lt;td&gt;{order.note}&lt;/td&gt;</code> と書くと、文字列はテキストとして表示される。一方、詳細画面で <code>dangerouslySetInnerHTML</code> を使うと、その値を HTML として扱う。レビューでは、そのプロパティに渡す HTML をどこで作り、太字だけを許す設定をどこで適用したかまでたどる。<a href="https://ja.react.dev/reference/react-dom/components/common#dangerously-setting-the-inner-html">React 日本語版「内部 HTML を危険な方法で設定する」</a></p>
+
+            <h3>④ サニタイズした後、誰が最後に HTML を書き換える？</h3>
+            <p>詳細画面に強調表示ライブラリを追加したら、サニタイザーの戻り値に加えて、そのライブラリが作った最終 DOM もテストする。たとえば太字と属性を持つ校正用サンプルを使い、「本文の文字が残る」「太字が残る」「許可していない属性が消える」を別々に確かめる。DOMPurify の README は処理後の書き換えと、サーバーで利用する場合の DOM 実装の更新にも触れている。<a href="https://github.com/cure53/DOMPurify#is-there-any-foot-gun-potential">DOMPurify の注意事項</a> ／ <a href="https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md#html-sanitization">OWASP「HTML Sanitization」</a></p>
+
+            <h3>⑤ チーム全体で HTML の扱いを揃えるには？</h3>
+            <p><strong>Trusted Types</strong> を強制すると、対応ブラウザーでは <code>innerHTML</code> などの対象 sink で型が検査される。ポリシーでサニタイザーを呼び出して <code>TrustedHTML</code> を作れば、HTML を許可する判断を一か所にまとめられる。入力をそのまま返すポリシーでも型は作れてしまうので、レビュー対象は型の名前だけでなくポリシーの中身だ。<a href="https://developer.mozilla.org/ja/docs/Web/API/Trusted_Types_API">MDN 日本語版「信頼型 API」</a></p>
+            <p>導入前の調査に使う <code>Content-Security-Policy-Report-Only</code> はポリシー違反を観測するためのヘッダーで、そのポリシー自体は動作を遮断しない。違反レポートを受け取ったときは、実際に配信したヘッダーと、該当画面の最終 DOM を併せて確認する。<a href="https://developer.mozilla.org/ja/docs/Web/HTTP/Reference/Headers/Content-Security-Policy-Report-Only">MDN 日本語版「Content-Security-Policy-Report-Only」</a></p>
+
+            <details><summary>理解度チェック　備考が詳細画面だけで太字になった。これで XSS と言える？</summary>
+                <p>この仕様では太字は期待した表示。確認できたのは、一覧と詳細で解釈が異なることまで。次は詳細の最終 DOM に許可外の要素・属性が残るか、どの処理がそれを作ったかを確認する。許可外の装飾が残る場合も、表示要件の不具合とスクリプトの実行可能性は個別に評価する。</p>
+            </details>
+            <p><a href="../labs/xss-flow.html#http">保存した値と API 応答を見比べる</a> ／ <a href="../labs/xss-flow.html#sanitize">許可設定と最終 DOM を見比べる</a></p>
         </section>
 
         <!-- 最初の一歩 -->
