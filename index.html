@@ -6,176 +6,44 @@
     <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
     <title>Bug Bounty Learning Path</title>
     <link rel="stylesheet" href="assets/style.css">
-    <style>
-        .hero {
-            text-align: center;
-            padding: 4rem 0 2rem;
-        }
-        .hero h1 {
-            font-size: 2.8rem;
-            background: linear-gradient(135deg, var(--accent), var(--purple));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 0.5rem;
-        }
-        .hero p { color: var(--text-muted); font-size: 1.1rem; }
-
-        .progress-overview {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 1.5rem 2rem;
-            margin: 2rem 0 3rem;
-            display: flex;
-            align-items: center;
-            gap: 1.5rem;
-        }
-        .progress-overview .label {
-            font-size: 0.85rem;
-            color: var(--text-muted);
-            white-space: nowrap;
-        }
-        .progress-overview .bar-outer {
-            flex: 1;
-            height: 10px;
-            background: var(--border);
-            border-radius: 5px;
-            overflow: hidden;
-        }
-        .progress-overview .bar-inner {
-            height: 100%;
-            background: linear-gradient(90deg, var(--green), var(--accent));
-            border-radius: 5px;
-            transition: width 0.4s;
-        }
-        .progress-overview .count {
-            font-weight: 600;
-            font-size: 0.9rem;
-            color: var(--text);
-            white-space: nowrap;
-        }
-
-        .phase-card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            margin-bottom: 2rem;
-            overflow: hidden;
-            transition: border-color 0.2s;
-        }
-        .phase-card:hover { border-color: var(--accent); }
-
-        .phase-card-header {
-            padding: 1.5rem 2rem;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            border-bottom: 1px solid var(--border);
-        }
-        .phase-badge {
-            width: 44px; height: 44px;
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-weight: 700; font-size: 1.1rem;
-            flex-shrink: 0;
-        }
-        .phase-badge.lv0 { background: var(--green); color: #000; }
-        .phase-badge.lv1 { background: #2ea043; color: #fff; }
-        .phase-badge.lv2 { background: var(--yellow); color: #000; }
-        .phase-badge.lv3 { background: var(--orange); color: #fff; }
-        .phase-badge.lv4 { background: var(--red); color: #fff; }
-        .phase-badge.lv5 { background: var(--purple); color: #fff; }
-
-        .phase-card-header .title { font-size: 1.2rem; font-weight: 600; }
-        .phase-card-header .desc { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.2rem; }
-
-        .phase-modules {
-            padding: 1.5rem 2rem;
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-            gap: 0.8rem;
-        }
-
-        .mod-link {
-            display: block;
-            padding: 0.8rem 1rem;
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            color: inherit;
-            text-decoration: none;
-            transition: all 0.15s;
-        }
-        .mod-link:hover {
-            border-color: var(--accent);
-            transform: translateY(-1px);
-            text-decoration: none;
-        }
-        .mod-link.completed {
-            border-color: var(--green);
-            background: rgba(63, 185, 80, 0.05);
-        }
-        .mod-link .mod-title { font-size: 0.9rem; font-weight: 500; margin-bottom: 0.2rem; }
-        .mod-link .mod-sub { font-size: 0.75rem; color: var(--text-muted); }
-
-        .sources-section {
-            margin-top: 3rem;
-            padding-top: 2rem;
-            border-top: 1px solid var(--border);
-        }
-        .source-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-            gap: 1rem;
-            margin-top: 1rem;
-        }
-        .source-item {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 1rem;
-        }
-        .source-item h4 { font-size: 0.85rem; color: var(--accent); margin-bottom: 0.3rem; }
-        .source-item p { font-size: 0.78rem; color: var(--text-muted); }
-    </style>
+    <link rel="stylesheet" href="assets/home.css">
 </head>
-<body>
+<body class="home">
     <div class="container">
-        <div class="hero">
-            <h1>Bug Bounty Learning Path</h1>
-            <p>from Zero to First Valid Report &mdash; 体系的ロードマップ</p>
-        </div>
-
-        <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:1.5rem 2rem; margin-bottom:2rem;">
-            <h3 style="margin-bottom:0.8rem; font-size:1rem;">How to use this site</h3>
-            <ul style="color:var(--text-muted); font-size:0.9rem; padding-left:1.2rem;">
-                <li><strong>Phase 0 から順番に進める</strong>。各 Phase は前の Phase の知識を前提にしている</li>
-                <li><strong>分からない用語は Module 00 の用語集</strong>に戻る。初出の英語用語は日本語注釈付き</li>
-                <li><strong>Theory だけ読んで次に行かない</strong>。各モジュールの Practice / WSA Lab を必ず1つはやる</li>
-                <li><strong>Phase 2 まで完了すれば huntr で最初のレポートを書ける</strong>。それが最初のマイルストーン</li>
-                <li>"Mark Complete" ボタンで進捗を記録。ブラウザに保存されるのでいつでも再開可能</li>
-            </ul>
-            <div style="display:flex; gap:1rem; margin-top:1rem;">
-                <a href="timeline.html" style="padding:0.5rem 1rem; background:var(--accent); color:#000; border-radius:6px; font-size:0.85rem; font-weight:500; text-decoration:none;">30-Day Timeline</a>
-                <a href="quiz.html" style="padding:0.5rem 1rem; background:var(--purple); color:#fff; border-radius:6px; font-size:0.85rem; font-weight:500; text-decoration:none;">Quiz (理解度チェック)</a>
-                <a href="visuals.html" style="padding:0.5rem 1rem; background:var(--green); color:#000; border-radius:6px; font-size:0.85rem; font-weight:500; text-decoration:none;">Visual Reference (図解)</a>
+        <header class="mast">
+            <a class="brand" href="index.html"><img src="assets/favicon.svg" width="30" height="30" alt="">Learning Path</a>
+            <nav aria-label="学習ツール"><a href="timeline.html">30日プラン</a><a href="quiz.html">クイズ</a><a href="visuals.html">図解</a></nav>
+        </header>
+        <main>
+        <section class="hero">
+            <div class="hero-copy">
+                <h1>Bug Bounty <em>Learning Path</em></h1>
+                <p>Webの仕組みを学び、演習で確かめ、最初の脆弱性レポートを書く。基礎から実践までをたどる6つのフェーズ。</p>
+                <div class="hero-actions"><a class="primary" href="modules/00-http-fundamentals.html">基礎から始める →</a><a href="labs/xss-flow.html">XSS実習を開く ↗</a></div>
+            </div>
+            <nav class="route-map" aria-label="学びたいフェーズを地図から選ぶ">
+                <a href="#phase-0" style="left:11.00%;top:77.78%" aria-label="Phase 0 Foundation">0<span>Foundation</span></a>
+                <a href="#phase-1" style="left:29.00%;top:55.00%" aria-label="Phase 1 Core Vulnerabilities">1<span>Core</span></a>
+                <a href="#phase-2" style="left:46.00%;top:56.94%" aria-label="Phase 2 Source Code Audit">2<span>Audit</span></a>
+                <a href="#phase-3" style="left:55.50%;top:35.00%" aria-label="Phase 3 Recon &amp; Blackbox Testing">3<span>Recon</span></a>
+                <a href="#phase-4" style="left:69.50%;top:37.22%" aria-label="Phase 4 Advanced Exploitation">4<span>Advanced</span></a>
+                <a href="#phase-5" style="left:88.00%;top:11.94%" aria-label="Phase 5 Operations">5<span>Operations</span></a>
+            </nav>
+        </section>
+        <div class="catalog-heading">
+            <h2>学習カリキュラム</h2>
+            <div class="progress-overview">
+                <span>完了した教材</span>
+                <div class="bar-outer" data-progress-total="56"><div class="bar-inner" data-progress-bar style="width:0%"></div></div>
+                <span class="count"><span data-progress-count>0</span> / 56</span>
             </div>
         </div>
-
-        <div class="progress-overview">
-            <span class="label">Progress</span>
-            <div class="bar-outer" data-progress-total="56">
-                <div class="bar-inner" data-progress-bar style="width:0%"></div>
-            </div>
-            <span class="count"><span data-progress-count>0</span> / 56</span>
-        </div>
-
         <!-- Phase 0 -->
-        <div class="phase-card">
+        <div class="phase-card" id="phase-0">
             <div class="phase-card-header">
-                <div class="phase-badge lv0">0</div>
+                <div class="phase-badge">PHASE 0</div>
                 <div>
-                    <div class="title">Foundation &mdash; Web Security の土台</div>
+                    <h3 class="title">Foundation &mdash; Web Security の土台</h3>
                     <div class="desc">HTTP, Browser Security Model, 認証メカニズム, ツールセットアップ</div>
                 </div>
             </div>
@@ -212,11 +80,11 @@
         </div>
 
         <!-- Phase 1 -->
-        <div class="phase-card">
+        <div class="phase-card" id="phase-1">
             <div class="phase-card-header">
-                <div class="phase-badge lv1">1</div>
+                <div class="phase-badge">PHASE 1</div>
                 <div>
-                    <div class="title">Core Vulnerabilities &mdash; 脆弱性クラス別攻略</div>
+                    <h3 class="title">Core Vulnerabilities &mdash; 脆弱性クラス別攻略</h3>
                     <div class="desc">OWASP Top 10 + 頻出クラスを1つずつ深堀り。WSA Lab で実践</div>
                 </div>
             </div>
@@ -273,11 +141,11 @@
         </div>
 
         <!-- Phase 2 -->
-        <div class="phase-card">
+        <div class="phase-card" id="phase-2">
             <div class="phase-card-header">
-                <div class="phase-badge lv2">2</div>
+                <div class="phase-badge">PHASE 2</div>
                 <div>
-                    <div class="title">Source Code Audit &mdash; Whitebox (huntr)</div>
+                    <h3 class="title">Source Code Audit &mdash; Whitebox (huntr)</h3>
                     <div class="desc">OSSソースコードから脆弱性を発見する。huntr.com を主戦場に</div>
                 </div>
             </div>
@@ -326,11 +194,11 @@
         </div>
 
         <!-- Phase 3 -->
-        <div class="phase-card">
+        <div class="phase-card" id="phase-3">
             <div class="phase-card-header">
-                <div class="phase-badge lv3">3</div>
+                <div class="phase-badge">PHASE 3</div>
                 <div>
-                    <div class="title">Recon & Blackbox Testing</div>
+                    <h3 class="title">Recon & Blackbox Testing</h3>
                     <div class="desc">HackerOne / Intigriti / IssueHunt でのWebアプリ外部テスト</div>
                 </div>
             </div>
@@ -371,11 +239,11 @@
         </div>
 
         <!-- Phase 4 -->
-        <div class="phase-card">
+        <div class="phase-card" id="phase-4">
             <div class="phase-card-header">
-                <div class="phase-badge lv4">4</div>
+                <div class="phase-badge">PHASE 4</div>
                 <div>
-                    <div class="title">Advanced Exploitation &mdash; 連鎖と高度技法</div>
+                    <h3 class="title">Advanced Exploitation &mdash; 連鎖と高度技法</h3>
                     <div class="desc">複数の問題を連鎖させてインパクト最大化。実レポートから学ぶ</div>
                 </div>
             </div>
@@ -420,11 +288,11 @@
         </div>
 
         <!-- Phase 5 -->
-        <div class="phase-card">
+        <div class="phase-card" id="phase-5">
             <div class="phase-card-header">
-                <div class="phase-badge lv5">5</div>
+                <div class="phase-badge">PHASE 5</div>
                 <div>
-                    <div class="title">Operations &mdash; 持続可能なハンティング</div>
+                    <h3 class="title">Operations &mdash; 持続可能なハンティング</h3>
                     <div class="desc">Dup回避, Signal管理, レポート品質, 税務, 実体験からの教訓</div>
                 </div>
             </div>
@@ -472,9 +340,12 @@
             </div>
         </div>
 
+        <details class="study-guide"><summary>学習の進め方</summary>
+            <p>Phase 0 から順に進み、各教材の Practice を1つ試したら「Mark Complete」で記録します。進捗はこのブラウザーに保存されます。用語に迷ったら Module 00、最初のレポートに取り組むときは Phase 2 を参照してください。</p>
+        </details>
         <!-- Sources -->
         <div class="sources-section">
-            <h2>Information Sources</h2>
+            <h2>参考資料</h2>
             <div class="source-grid">
                 <div class="source-item">
                     <h4>PortSwigger Web Security Academy</h4>
@@ -510,6 +381,7 @@
                 </div>
             </div>
         </div>
+        </main>
     </div>
 
     <script src="assets/progress.js"></script>
