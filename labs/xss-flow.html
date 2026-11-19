@@ -67,5 +67,6 @@
         <pre id="trees" aria-live="polite"></pre>
         <details><summary>観察から何を判断できる？</summary><p>tbody では行が残り、table では tbody が補われ、div ではセルの文字だけが残る。同じ文字列でもパーサーの文脈で DOM は変わる。この例で変化するのは表の構造だけ。mXSS と判断するには、再解析や正規化により、許可されていない実行可能な構造が生じることが条件になる。修正後は表示先の実際の DOM で許可タグ・属性を確認し、サニタイズ済みノードを文字列に戻す工程を減らす。</p></details>
     </section>
+    <p><a href="../modules/10-xss-practical.html">次は実務へ　Burp・DevTools、別アカウントでの検証、報告と再テスト</a></p>
     <nav class="page-nav"><a href="xss.html">表示方法を選ぶ12問</a><a href="../quizzes/q-10-xss.html">理解度を5問で確認 →</a></nav>
 </main></body></html>

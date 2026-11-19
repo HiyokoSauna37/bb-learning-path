@@ -67,3 +67,5 @@ Educational content. Feel free to learn from it.
 「XSS の保存型を手を動かして理解したい」のように、テーマや教材番号を指定してください。AI は環境構築から進めるか、演習画面から始めるかを確認します。[XSS 表示検証ドリル（12問）](labs/xss.html) はファイルをブラウザーで直接開いて利用できます。
 
 [XSS データフロー実習](labs/xss-flow.html)では、HTTP で検索と投稿の経路を比較し、ブラウザーで URL の入力元、DOMPurify の許可設定、再解析後の DOM を観察します。HTTP の2題はリポジトリのルートで `python3 labs/xss_http.py` を起動します。残りの3題は HTML を直接開いて取り組めます。
+
+[XSS 実務ガイド](modules/10-xss-practical.html)は、WebPT・バグバウンティ向けの入力調査、コンテキストと解析順序、Burp・DevTools、postMessage、サニタイザー、CSP、アップロード、影響評価と報告、再テストを17項目で扱います。ケース問題8問とAcademyへの学習ルートも収録しています。

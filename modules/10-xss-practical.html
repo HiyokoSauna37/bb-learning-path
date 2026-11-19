@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+    <title>XSS 実務ガイド — WebPT と Bug Bounty</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .contents { padding: 1.1rem 1.3rem; margin: 1.5rem 0 2rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+        .contents ol { columns: 2; column-gap: 2rem; }
+        .contents li { break-inside: avoid; }
+        .section { scroll-margin-top: 1rem; }
+        .section p + p { margin-top: .7rem; }
+        .section details { border: 1px solid var(--border); border-radius: 6px; padding: .8rem 1rem; margin: .8rem 0; }
+        summary { cursor: pointer; color: var(--accent); }
+        details[open] summary { margin-bottom: .65rem; }
+        .table-scroll { overflow-x: auto; margin: 1rem 0; }
+        .table-scroll table { min-width: 640px; margin: 0; }
+        th, td { vertical-align: top; }
+        .source { font-size: .85rem; color: var(--text-muted); }
+        pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+        .breadcrumb, .page-nav { flex-wrap: wrap; gap: .7rem; }
+        :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+        @media (max-width: 600px) { .contents ol { columns: 1; } }
+    </style>
+</head>
+<body>
+<main class="container">
+    <nav class="breadcrumb"><a href="../index.html">Top</a> &gt; <a href="10-xss.html">XSS 基礎</a> &gt; 実務ガイド</nav>
+    <header class="page-header">
+        <h1>XSS 実務ガイド</h1>
+        <p class="subtitle">Webペネトレーションテストとバグバウンティで、入力を探し、実行条件を確認し、修正まで説明する。</p>
+    </header>
+    <p>基礎編の source・sink・sanitizer を、実際の画面とHTTP通信に結び付ける。ここでは、検査用アカウントAの投稿をアカウントBが読む場面を軸に、観測結果から判断する手順を学ぶ。基礎用語は <a href="10-xss.html#data-flow">データフローの説明</a>、操作に慣れたい場合は <a href="../labs/xss-flow.html">ローカル実習</a>を参照。</p>
+    <nav class="contents" aria-label="実務ガイドの目次">
+        <ol>
+            <li><a href="#workflow">診断の進め方</a></li>
+            <li><a href="#inventory">入力元と閲覧先の棚卸し</a></li>
+            <li><a href="#evidence">XSS成立を示す証拠</a></li>
+            <li><a href="#contexts">出力コンテキストの読み方</a></li>
+            <li><a href="#parsers">デコードとパーサーの順序</a></li>
+            <li><a href="#reflected">Reflectedの調査手順</a></li>
+            <li><a href="#stored">Stored・Blindの調査手順</a></li>
+            <li><a href="#dom-debug">DOMのデバッグ手順</a></li>
+            <li><a href="#messages">postMessageと信頼境界</a></li>
+            <li><a href="#sanitizers">SanitizerとMutationの検証</a></li>
+            <li><a href="#frameworks">フレームワークとSSR</a></li>
+            <li><a href="#csp">CSP・Trusted Types・sandbox</a></li>
+            <li><a href="#uploads">ファイル・SVG・文書の表示</a></li>
+            <li><a href="#impact">影響評価と報告書</a></li>
+            <li><a href="#retest">修正後の再テスト</a></li>
+            <li><a href="#field-exercises">ケース問題</a></li>
+            <li><a href="#learning-route">Academyへの学習ルート</a></li>
+        </ol>
+    </nav>
+
+    <section class="section" id="workflow">
+        <h2>1. 診断の進め方を決める</h2>
+        <p>WebPTでは合意した機能・ロール・ブラウザーを検査し、問題の再現と対策を報告する。バグバウンティでは、プログラムの対象範囲、受理する問題、テスト用アカウント、レートやBlind XSSの扱いを確認して着手する。両方に共通する記録単位は「入力欄」だけでなく「入力した人から閲覧する人への経路」。</p>
+        <ol>
+            <li><strong>通常操作を記録する。</strong> プロキシの履歴で、機能を動かすリクエスト・応答・閲覧者のロールを押さえる。</li>
+            <li><strong>固有の目印を入れる。</strong> たとえば <code>xss-note-7f3a</code>。検索結果、詳細、編集、通知などに現れる場所を探す。</li>
+            <li><strong>解釈先を分類する。</strong> HTML本文、属性、URL、JavaScript、DOM APIのどれに渡るかを見る。</li>
+            <li><strong>実行条件を絞る。</strong> パーサー、引用符、イベント、必要な操作、CSP、サニタイザーの変換を一つずつ確認する。</li>
+            <li><strong>別の閲覧者で再現する。</strong> 検査用アカウントBの通常操作で届くか確認し、実行した文書のoriginとロールを記録する。</li>
+            <li><strong>最小の再現手順にする。</strong> 関係する入力・手順だけに絞り、証拠、修正案、再テスト条件を揃える。</li>
+        </ol>
+        <p>途中の記録は次の形にする。「Aの投稿フォーム → POST本文 → 保存 → JSON API → Bの画面の描画処理 → innerHTML」。これなら、保存、通信、画面のどこを調べたかを追い直せる。</p>
+        <details><summary>調査メモのひな形を開く</summary>
+<pre><code>機能と入力の位置    POST /notes の body.note
+入力者と閲覧者      アカウントA → アカウントB
+目印とデータID      xss-note-7f3a / note_id=42
+応答と保存          POST後に保存、GET /api/notes/42 がJSONを返す
+途中の変換          response.json → Markdown変換 → サニタイズ
+表示先と文脈        コメント詳細のHTML断片
+実行条件と証拠      操作、origin、実行マーカー、該当コード行
+次の確認            一覧の抜粋と、保存済みデータの再表示</code></pre>
+        </details>
+        <p class="source">検査項目の体系は <a href="https://owasp.org/www-project-web-security-testing-guide/">OWASP Web Security Testing Guide</a>、XSSの全体像は <a href="https://portswigger.net/web-security/cross-site-scripting">PortSwigger XSS</a>を参照。</p>
+    </section>
+
+    <section class="section" id="inventory">
+        <h2>2. 入力元と閲覧先を対にして探す</h2>
+        <p>検索フォームだけを調べると、保存・再表示・別ロール向けの経路が抜けやすい。通常操作から次の表を埋め、目印が届いた画面ごとに解釈先を調べる。</p>
+        <div class="table-scroll" role="region" aria-label="入力元と閲覧先の一覧" tabindex="0"><table>
+            <thead><tr><th>入力元</th><th>探す表示先</th><th>追加の確認</th></tr></thead>
+            <tbody>
+                <tr><td>クエリ、パス、検索フィルター</td><td>検索見出し、パンくず、エラー画面</td><td>正常時と入力エラー時で異なるテンプレートか。</td></tr>
+                <tr><td>プロフィール、表示名、組織名</td><td>一覧、メンバー管理、招待、監査ログ</td><td>本人以外が読む画面に同じ値が届くか。</td></tr>
+                <tr><td>コメント、チャット、チケット</td><td>本文、プレビュー、引用、通知</td><td>一覧の抜粋と詳細でレンダラーが違うか。</td></tr>
+                <tr><td>Markdown、リッチテキスト</td><td>HTMLプレビュー、保存後の本文、編集再開</td><td>変換、サニタイズ、リンク化の順序。</td></tr>
+                <tr><td>ファイル名、説明、インポート項目</td><td>ファイル一覧、処理失敗メッセージ、詳細</td><td>ファイル本文とメタデータを別々に追う。</td></tr>
+                <tr><td>共有リンク、redirect先、戻り先</td><td>リンクのhref、遷移処理、ログイン画面</td><td>URLをブラウザーが最終的にどう解釈したか。</td></tr>
+                <tr><td>URLフラグメント、SPAルーター</td><td>クライアント側の検索、タブ、エラー表示</td><td>初回表示と画面遷移時の両方を観察する。</td></tr>
+                <tr><td>APIの応答、連携サービスのデータ</td><td>フロントエンドが後から作るDOM</td><td>JSONの解析後にどのフィールドがHTML化されるか。</td></tr>
+                <tr><td>localStorage、sessionStorage、Cookie</td><td>設定復元、履歴、直前の入力の復元</td><td>読み出し元を見つけたら、値を書ける実際の入口も探す。</td></tr>
+                <tr><td>postMessage、ポップアップ、iframe</td><td>受信イベントから呼ばれる描画や遷移</td><td>送信側の画面参照、受信側のorigin検査と型検査。</td></tr>
+                <tr><td>HTTPヘッダーに由来する記録</td><td>アクセスログやサポート向け画面</td><td>どのクライアントがそのヘッダーを設定できるか。</td></tr>
+                <tr><td>メール、Webhook、外部からの取込</td><td>アプリ内のメール本文、連携履歴</td><td>外部データが同一originの信頼済みデータとして扱われていないか。</td></tr>
+            </tbody>
+        </table></div>
+        <p><code>localStorage</code>を自分のDevToolsで直接編集した実験は、読み出し先の調査に使える。報告には、別の利用者のブラウザーへその値を届ける入口も必要になる。HTTPヘッダーも、プロキシで変更できた条件と、被害者の通常操作で送られる条件を記録する。</p>
+        <p class="source"><a href="https://portswigger.net/web-security/cross-site-scripting/stored">PortSwigger Stored XSS</a> ／ <a href="https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/07-Input_Validation_Testing/02-Testing_for_Stored_Cross_Site_Scripting">WSTG Stored XSS</a></p>
+    </section>
+
+    <section class="section" id="evidence">
+        <h2>3. 何を観察すればXSSの証拠になるか</h2>
+        <p>HTTP応答に目印がある、Elementsに要素が増えた、JavaScriptが動いた、という観察はそれぞれ示す範囲が違う。途中の結果を残しておくと、再現しない原因も説明できる。</p>
+        <div class="table-scroll" role="region" aria-label="観測結果と証明範囲" tabindex="0"><table>
+            <thead><tr><th>観測</th><th>確認できたこと</th><th>次に確かめること</th></tr></thead>
+            <tbody>
+                <tr><td>応答に入力文字列がある</td><td>その応答まで値が届いた。</td><td>Content-Type、前後の構文、エンコード、ブラウザーでの用途。</td></tr>
+                <tr><td>太字や新しい要素が出る</td><td>マークアップとして解釈された。</td><td>仕様の許可範囲と、実行可能な構造が作れるか。</td></tr>
+                <tr><td>サーバーに画像の読込が届く</td><td>そのリソースが要求された。</td><td>プレビュー生成器、クローラー、メールのプロキシ等による読込も考慮する。</td></tr>
+                <tr><td>入力を通じたコードが検査用の表示を出す</td><td>その文書内でコードが実行された。</td><td>origin、ブラウザー、CSP、閲覧ロール、必要な操作。</td></tr>
+                <tr><td>検査用Bの画面でも通常操作で再現する</td><td>AからBに到達する実行経路がある。</td><td>使える権限・データと、再認証などの追加条件。</td></tr>
+            </tbody>
+        </table></div>
+        <p>ラボでは <code>console.log('xss-proof', location.origin)</code> や専用の表示マーカーで実行を確認できる。Consoleに自分で打って動かした結果と、入力欄から届いた値がアプリの処理で実行された結果は、再現手順に区別して記載する。<code>alert()</code> が見えない場合はフレームやブラウザーの制限、イベントの未発火、構文エラーも確認する。</p>
+        <p>HTMLだけを変えられる問題はHTML injection、DOMの名前解決を変える問題はDOM clobberingとして影響を評価できる。コード実行までの連鎖を示せたときは、その追加条件も説明する。</p>
+        <p class="source"><a href="https://portswigger.net/web-security/cross-site-scripting#xss-proof-of-concept">PortSwigger XSS proof of concept</a> ／ <a href="https://portswigger.net/web-security/dom-based/dom-clobbering">DOM clobbering</a></p>
+    </section>
+
+    <section class="section" id="contexts">
+        <h2>4. 出力コンテキストを読む</h2>
+        <p><code>USER_INPUT</code> の前後を観察する。入力が置かれた構文と、入力を読む次のパーサーを特定してから検査を組み立てる。</p>
+        <div class="table-scroll" role="region" aria-label="出力コンテキストと防御" tabindex="0"><table>
+            <thead><tr><th>出力例</th><th>構文上の着目点</th><th>修正の方針</th></tr></thead>
+            <tbody>
+                <tr><td><code>&lt;p&gt;USER_INPUT&lt;/p&gt;</code></td><td>通常のHTML本文としてタグが解釈されるか。</td><td>テンプレートの自動エスケープ、通常要素のtextContent。</td></tr>
+                <tr><td><code>&lt;input value="USER_INPUT"&gt;</code></td><td>属性の引用符が保持されるか。属性値は実体参照がデコードされる。</td><td>属性名を固定し、引用符で囲んで属性用エンコード。</td></tr>
+                <tr><td><code>&lt;input value=USER_INPUT&gt;</code></td><td>空白やタグの終端も属性の構文に関係する。</td><td>テンプレートで属性値を引用符で囲む。</td></tr>
+                <tr><td><code>&lt;a href="USER_INPUT"&gt;</code></td><td>URLスキーム、基準URL、クリックの必要性。</td><td>URLを解析して用途に合うスキーム・originを許可する。</td></tr>
+                <tr><td><code>&lt;script&gt;const q = 'USER_INPUT';&lt;/script&gt;</code></td><td>HTMLのscript終端と、JS文字列の両方の構文がある。</td><td>値をAPI等のデータとして受け取る。埋込みが必要ならテンプレートの専用機能を使う。</td></tr>
+                <tr><td>バッククォート内の文字列</td><td><code>${...}</code> がJSの式として解釈される場所か。</td><td>外部入力をコード生成に連結せず、変数や関数引数にする。</td></tr>
+                <tr><td><code>&lt;button onclick="USER_INPUT"&gt;</code></td><td>HTML属性の解析後にJavaScriptが解析される。</td><td>固定したイベントリスナーに関数を登録し、値をデータとして渡す。</td></tr>
+                <tr><td><code>&lt;textarea&gt;USER_INPUT&lt;/textarea&gt;</code></td><td>文字の読まれ方と、その要素の終了タグの扱い。</td><td>サーバーではその文脈に対応するエンコード、DOMではvalueを使う。</td></tr>
+                <tr><td>CSSプロパティ、style要素</td><td>許可した値の範囲、URL、HTML要素の終了境界。</td><td>色などの値を限定する。任意のCSS全体を組み立てる設計を見直す。</td></tr>
+            </tbody>
+        </table></div>
+        <h3>ラボで試す基本例と成立条件</h3>
+        <p>以下はローカルの演習やAcademyの指定ラボで、入力からコードが動く経路を観察する例。各例の前提は、該当する構文の区切りがそのまま届き、実行を許す文書であること。先に目印だけを送り、実際の表示先が表のどれかを確かめよう。</p>
+<pre><code>&lt;!-- HTML本文として最初の文書を解析する場合 --&gt;
+&lt;script&gt;console.log('xss-proof', location.origin)&lt;/script&gt;
+
+&lt;!-- HTML断片の挿入でイベントを観察する場合 --&gt;
+&lt;img src="/missing-xss-proof" onerror="console.log('xss-proof', location.origin)"&gt;
+
+&lt;!-- ダブルクォートで囲まれた属性で、フォーカス操作を伴う場合 --&gt;
+" onfocus="console.log('xss-proof', location.origin)" data-note="
+
+/* JSのシングルクォート文字列を閉じられる場合 */
+'; console.log('xss-proof', location.origin); //
+
+/* 文字列をテンプレートリテラルのソースに直接連結している場合 */
+${console.log('xss-proof', location.origin)}</code></pre>
+        <p><code>innerHTML</code> で追加したscript要素は通常そのまま実行されない。最初の文書として解析されるHTMLと、JavaScriptで追加した断片を区別する。イベント付き要素も、リソースの失敗や利用者のフォーカス操作など、そのイベントの条件が必要になる。</p>
+        <p class="source"><a href="https://portswigger.net/web-security/cross-site-scripting/contexts">PortSwigger XSS contexts</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML#security_considerations">MDN innerHTML</a></p>
+    </section>
+
+    <section class="section" id="parsers">
+        <h2>5. デコードとパーサーの順序を書く</h2>
+        <p>「エンコードしたから通る」と覚えると、どの段階で文字が変わったかを見失う。通信上の値、アプリ内の値、最終DOMを並べて記録する。</p>
+        <ol>
+            <li><code>%3Cb%3E</code> をクエリ値として送る。クエリのパーサーでデコードされると <code>&lt;b&gt;</code> になる。</li>
+            <li>サーバーがHTML本文用にエンコードすると、応答には <code>&amp;lt;b&amp;gt;</code> が入る。</li>
+            <li>HTMLパーサーが読むと、本文のテキストノードに <code>&lt;b&gt;</code> の文字が入る。その文字が同じ解析で新しいタグとして読み直されるわけではない。</li>
+            <li>後からコードがそのtextContentを読み、別の要素のinnerHTMLに入れると、再びHTML解析が始まる。この2回目の解釈先まで追う。</li>
+        </ol>
+        <div class="table-scroll" role="region" aria-label="変換と安全性の関係" tabindex="0"><table>
+            <thead><tr><th>処理</th><th>行っていること</th><th>確認する条件</th></tr></thead>
+            <tbody>
+                <tr><td>URLデコード、URLSearchParams</td><td>URLで表した値を取り出す。</td><td>フォーム型の空白・プラスや、アプリの追加デコード。</td></tr>
+                <tr><td>JSON.parse / response.json</td><td>JSONを値・配列・オブジェクトとして読む。</td><td>読んだ文字列が次にHTMLやコードへ渡されるか。</td></tr>
+                <tr><td>HTMLエンコード</td><td>該当する文字をHTML上の実体参照にする。</td><td>適用先が本文・属性・script内のどこか。</td></tr>
+                <tr><td>Base64</td><td>バイト列を別の表現にする。</td><td>復元後の値と、その使い方。</td></tr>
+                <tr><td>HTMLサニタイズ</td><td>解析したHTMLに許可ポリシーを適用する。</td><td>設定、バージョン、処理後の変更、最終DOM。</td></tr>
+            </tbody>
+        </table></div>
+        <p><code>%253C</code> は1回のURLデコード後に <code>%3C</code> になる。追加のデコードが観測される場合に、2段階目を調べる。入力の見た目だけから、サーバーが2回デコードすると仮定しない。</p>
+        <p class="source"><a href="https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams">MDN URLSearchParams</a> ／ <a href="https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/DOM_based_XSS_Prevention_Cheat_Sheet.md">OWASP DOM based XSS Prevention</a></p>
+        <h3>テンプレート式を含む入力は、いつ評価される？</h3>
+        <p>入力文字列に <code>${2 + 2}</code> が含まれていても、通常の変数に入れて表示するだけなら、その中身を式として再評価しない。外部入力がテンプレートリテラルのソース自体に連結されたり、テンプレートエンジンへソースとして渡されたりする箇所を確認する。</p>
+    </section>
+
+    <section class="section" id="reflected">
+        <h2>6. Reflectedの調査をHTTPとブラウザーでつなぐ</h2>
+        <ol>
+            <li>プロキシのHTTP履歴で、検索などの正常なリクエストを選び、メソッド・パス・本文形式・ログイン状態を保存する。</li>
+            <li>Burp RepeaterやCaidoの再送機能で、1項目だけ目印に変える。応答中の全出現箇所を検索する。</li>
+            <li>各出現箇所について引用符やタグを含む前後の構文、エンコード後の文字、Content-Typeを記録する。</li>
+            <li>ブラウザーの通常画面から同じ操作を行い、Networkの応答とElementsのDOMを比較する。初回表示だけでなくエラー表示や再検索も見る。</li>
+            <li>実行が確認できたら、新しいブラウザーセッションで再現し、必要なCookieやヘッダー、入力経路を確定する。</li>
+        </ol>
+        <p>Repeaterで作ったリクエストを、被害者役のブラウザーでどう発生させるかが次の問いになる。GETの共有URL、通常のPOSTフォーム、API呼び出しでは条件が違う。OriginやRefererを手動変更した結果は、ブラウザーが実際に送れる値と照合する。フラグメントの <code>#</code> 以降はHTTPリクエストに送られないため、通常のHTTP再送だけで同じsourceを検査できない。</p>
+        <h3>Content-Typeを変えたら挙動が違った</h3>
+        <p>JSON、フォーム、multipartのどれでパラメーターを読み取るかはサーバー側の設定に依存する。ヘッダーだけを変えた場合と、本文も対応形式に変えた場合を分けて記録する。CORSプリフライトやCookieのSameSite条件もあるため、受け付ける本文形式だけでクロスサイトの実行経路を確定できない。</p>
+        <p class="source"><a href="https://portswigger.net/web-security/cross-site-scripting/reflected">PortSwigger Reflected XSS</a> ／ <a href="00-http-fundamentals.html#body-formats">Body Formats</a> ／ <a href="15-csrf.html">CSRF教材</a></p>
+    </section>
+
+    <section class="section" id="stored">
+        <h2>7. Storedは保存から別の閲覧者まで追う</h2>
+        <p>保存時の応答が安全でも、一覧、検索の抜粋、管理画面、通知の本文で出力処理が違う場合がある。検査用Aで投稿し、Bの別プロファイルで開く。別タブは同じCookieを共有するので、ロールの検査ではアカウントを分離する。</p>
+        <div class="table-scroll" role="region" aria-label="保存型の閲覧マトリクス" tabindex="0"><table>
+            <thead><tr><th>経路</th><th>調べる条件</th><th>記録する結果</th></tr></thead>
+            <tbody>
+                <tr><td>Aの作成画面 → プレビュー</td><td>一時表示のレンダラーと保存後のレンダラー。</td><td>どの段階でHTMLが生成されたか。</td></tr>
+                <tr><td>Aの投稿 → Bの一覧・詳細</td><td>共有範囲、閲覧権限、リンクや操作の必要性。</td><td>Bが通常操作で実行したoriginと画面。</td></tr>
+                <tr><td>Aの編集 → Bの検索・通知</td><td>元データとキャッシュや抜粋の更新。</td><td>修正前の値が残る保存先。</td></tr>
+                <tr><td>Aの投稿 → 担当者の画面</td><td>担当者権限と画面への到達方法。</td><td>実測できた権限と、アクセスできず未確認の部分。</td></tr>
+                <tr><td>API保存 → JSON取得 → DOM描画</td><td>APIの文字列を最後に使うJavaScript。</td><td>StoredとDOM-basedの両方を示す経路。</td></tr>
+            </tbody>
+        </table></div>
+        <h3>Blind XSSを調べるとき</h3>
+        <p>結果の画面を直接見られないケースでは、プログラムが認めるコールバックの扱いを確認する。発火時刻、テストID、関連リクエストを結び付ける。外部リソースへのアクセス1回だけでは、コード実行や管理者権限まで判断できない。検査用画面へのアクセスや、トリアージ側の確認で証拠を補う。Cookie・画面全体の収集が必要かは実証したい影響に合わせて判断する。</p>
+        <p>レポートには保存したデータのIDと除去方法を含める。再訪時の影響と、後述の修正後再テストに必要になる。</p>
+        <p class="source"><a href="https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/07-Input_Validation_Testing/02-Testing_for_Stored_Cross_Site_Scripting">WSTG Stored XSS</a> ／ <a href="../labs/xss-flow.html#http">投稿の保存・再訪を観察する実習</a></p>
+    </section>
+
+    <section class="section" id="dom-debug">
+        <h2>8. DOMの調査は呼び出し元まで戻る</h2>
+        <p>まずElementsで目印の入ったノードを見つけ、DevToolsのDOM変更ブレークポイントで、値を挿入した行とコールスタックを見る。Sourcesの検索で <code>innerHTML</code> を見つけたら、呼び出し時の値、source、途中の変換をたどる。文字列検索のヒットだけでは脆弱性の成立を判断できない。</p>
+        <ol>
+            <li>NetworkでJSファイルとAPI応答を確認する。ソースマップが利用できる場合は、配信コードとの対応も確認する。</li>
+            <li>目印を入れ、画面遷移・編集・モーダル表示など、値を使う操作を行う。</li>
+            <li>対象ノードに「subtree modifications」等のブレークポイントを置き、もう一度同じ操作を行う。</li>
+            <li>停止した行で、渡された値とcall stackを記録する。早い初期描画の場合は呼び出し行にブレークポイントを置いて再読み込みする。</li>
+            <li>sourceからsinkまでの変換を表にし、同じ実行経路を新しいセッションで確認する。</li>
+        </ol>
+<pre><code>// 要件は検索語を文字で表示すること
+const value = new URL(location.href).searchParams.get('q') ?? '';
+const output = document.querySelector('#result');
+
+// 調査対象になるHTMLの解釈先
+output.innerHTML = value;
+
+// 要件に合う修正
+output.textContent = value;</code></pre>
+        <p>この例では <code>searchParams.get()</code> が値を読む入口で、<code>innerHTML</code> のsetterがHTML解析を始める。<code>JSON.parse()</code>、<code>decodeURIComponent()</code>、Base64の復元処理は、前後にあってもHTMLサニタイザーとしては働かない。</p>
+        <p>BurpのDOM Invaderは、source・sinkの観察やpostMessage調査を補助する。自動検出後も、手動操作での到達、実際の呼び出し値、必要な操作を保存する。ライブラリのsink一覧は <a href="10-xss.html#data-flow">基礎編</a>と合わせて読む。</p>
+        <h3>名前付きDOM参照も確認する</h3>
+        <p>DOM clobberingでは、要素のidやnameが <code>window</code> などの名前付き参照に影響し、既存のコードが想定外の要素を設定値として読む場合がある。たとえば <code>window.appConfig</code> を参照するコードなら、その値がアプリ自身のオブジェクトであることをどこで保証するかを見る。HTMLを追加できることに加え、その名前を読むコードと、URLや実行先に使われる経路が成立条件になる。</p>
+        <p class="source"><a href="https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/DOM_Clobbering_Prevention_Cheat_Sheet.md">OWASP DOM Clobbering Prevention</a></p>
+        <p class="source"><a href="https://developer.chrome.com/docs/devtools/javascript/breakpoints/">Chrome DevTools ブレークポイント</a> ／ <a href="https://portswigger.net/burp/documentation/desktop/tools/dom-invader">DOM Invader</a></p>
+    </section>
+
+    <section class="section" id="messages">
+        <h2>9. postMessageは送信元と値の用途を両方調べる</h2>
+        <p><code>message</code> ハンドラーを見つけたら、「誰が受信側のWindowを参照できるか」「event.originとsourceを検査するか」「event.dataをどこに渡すか」を追う。origin検査が欠けていても、その後の処理が文字を表示するだけなら、それだけでXSSの成立までは示せない。</p>
+        <p>たとえば、信頼した埋込みウィジェットから検索語を受け取る画面なら、次のように契約を限定できる。originはアプリが設定する固定値にし、iframeもアプリが管理する。</p>
+<pre><code>const widget = document.querySelector('#trusted-widget');
+const expectedOrigin = 'https://widget.example';
+
+window.addEventListener('message', event =&gt; {
+    if (event.origin !== expectedOrigin ||
+        event.source !== widget.contentWindow) return;
+
+    const message = event.data;
+    if (!message || message.type !== 'search-label' ||
+        typeof message.label !== 'string') return;
+
+    document.querySelector('#label').textContent = message.label;
+});</code></pre>
+        <p>送信側も <code>postMessage(message, expectedOrigin)</code> と受信先を指定する。<code>includes('example.com')</code> のような文字列検査と、scheme・host・portを含むoriginの一致は扱いが異なる。受信したURLへ遷移する設計なら、メッセージの検査に加え、遷移先URLの許可も別に検証する。</p>
+        <p><code>event.source</code> を確認しても、そのWindowが後でどこへ遷移したかまで固定されるわけではない。返信する場合も、確認した相手のoriginを指定する。sandbox等によりoriginが <code>null</code> になる設計は、信頼判定の条件を個別に見直す。</p>
+        <p class="source"><a href="https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage#security_concerns">MDN postMessage security concerns</a> ／ <a href="https://portswigger.net/web-security/dom-based/controlling-the-web-message-source">PortSwigger web message source</a></p>
+    </section>
+
+    <section class="section" id="sanitizers">
+        <h2>10. Sanitizerの前後にある処理まで検証する</h2>
+        <p>リッチテキストでは「どのタグ・属性・URLを許可するか」が仕様になる。ライブラリ名だけで終えず、バージョン、ポリシー、呼び出し箇所、処理後に使うライブラリ、最終的な挿入先を記録する。</p>
+        <div class="table-scroll" role="region" aria-label="サニタイザーの確認観点" tabindex="0"><table>
+            <thead><tr><th>確認する箇所</th><th>具体的な問い</th><th>修正後の証拠</th></tr></thead>
+            <tbody>
+                <tr><td>タグと属性</td><td>strongやem以外を許す必要があるか。data属性やARIA属性の扱いは明示したか。</td><td>許可した装飾は残り、除外した属性が最終DOMに存在しない。</td></tr>
+                <tr><td>リンクと画像</td><td>href・srcを許す場合、URLスキームと読み込む相手をどう制限するか。</td><td>許すURLが通り、用途外のURLは取り除かれる。</td></tr>
+                <tr><td>処理順序</td><td>Markdown変換、リンク化、構文ハイライトがいつ動くか。</td><td>全処理の終了後に許可条件が満たされている。</td></tr>
+                <tr><td>戻り値と再利用</td><td>ノードとして使うか、文字列に戻して違う親へ再挿入するか。</td><td>表示先のDOMとサニタイズ時のDOMの差が説明できる。</td></tr>
+                <tr><td>実行環境</td><td>ブラウザー版とサーバー版でパーサーやDOM実装が違うか。</td><td>両方の環境とバージョンを指定して再現する。</td></tr>
+                <tr><td>更新と古いデータ</td><td>依存ライブラリの修正が入ったか。以前の加工済みHTMLやキャッシュが残るか。</td><td>新規入力と既存保存データの両方で修正を確認する。</td></tr>
+            </tbody>
+        </table></div>
+        <h3>mXSSの検査で比較する3段階</h3>
+        <ol>
+            <li>サニタイザーが解析したDOMと、許可・除外した構造。</li>
+            <li>処理後のHTML文字列と、その後の文字列加工。</li>
+            <li>表示先の要素・名前空間で再解析された最終DOMと実行結果。</li>
+        </ol>
+        <p>ブラウザーがtbodyを補うような通常の構造変化だけでは、mXSS成立を判断できない。検査時には除外したはずの実行可能な構造が後から生じるかを確認する。過去のbypassを読む場合も、その時点のサニタイザー・設定・ブラウザーの条件を添える。対策は依存の更新に加え、処理済みの内容を後から無制限に加工する経路の見直しになる。</p>
+        <p><a href="../labs/xss-flow.html#sanitize">許可タグと属性を操作する実習</a> ／ <a href="../labs/xss-flow.html#mutation">表の再解析を比べる実習</a></p>
+        <p class="source"><a href="https://github.com/cure53/DOMPurify#is-there-any-foot-gun-potential">DOMPurifyの処理後変更に関する説明</a> ／ <a href="https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md#html-sanitization">OWASP HTML Sanitization</a></p>
+    </section>
+
+    <section class="section" id="frameworks">
+        <h2>11. フレームワークの「信頼する」箇所を探す</h2>
+        <p>フレームワークの通常のテキスト表示と、明示的にHTMLを受け取る機能を区別して調査する。自動エスケープを解除する処理を見つけたら、その呼び出し元まで戻り、値の由来と検証を確認する。</p>
+        <div class="table-scroll" role="region" aria-label="フレームワークと監査の起点" tabindex="0"><table>
+            <thead><tr><th>環境</th><th>監査の起点</th><th>調査するデータフロー</th></tr></thead>
+            <tbody>
+                <tr><td>React</td><td>dangerouslySetInnerHTML、refを通じた直接のDOM操作</td><td>通常の文字列の子要素はテキストとして表示される。HTMLを渡す箇所ではサニタイズ済みの値が来るかを確認する。</td></tr>
+                <tr><td>Vue</td><td>v-html、innerHTML、入力を含むテンプレート生成</td><td>HTML表示のポリシーと、テンプレートのソース自体を利用者が作れる範囲。</td></tr>
+                <tr><td>Angular</td><td>DomSanitizerのbypassSecurityTrust…、直接のDOM API</td><td>信頼済み扱いにするメソッドの前に、用途に合った検証を行うか。</td></tr>
+                <tr><td>AngularJSなどの式評価</td><td>テンプレートの式、外部入力を含むテンプレート</td><td>文字を表示する入力と、式としてコンパイルする入力。バージョンごとの条件。</td></tr>
+                <tr><td>Django / Jinja等</td><td>safe、Markup、autoescapeの解除</td><td>どの値をどの出力文脈で安全と見なしたか。HTML本文用エスケープを他の文脈にも流用していないか。</td></tr>
+                <tr><td>jQueryや古いUI部品</td><td>html、append、外部入力を含むセレクター、URL由来設定</td><td>引数・バージョン・実際の実行経路。HTML文字列と既存ノードの受け渡しを区別する。</td></tr>
+            </tbody>
+        </table></div>
+        <h3>SSRの初期データとhydration</h3>
+        <p>SSRはサーバーで初期HTMLを作り、hydrationでブラウザー側のコードが操作を引き継ぐ設計。初期HTMLの埋込みと、その後のDOM更新を両方検査する。<code>JSON.stringify()</code> でJSONにした値をそのままscript要素へ連結すると、HTML側のscript終端を扱い切れない場合がある。</p>
+        <p><code>type="application/json"</code> のscript要素も、HTMLパーサーによる要素の終了は考慮する。フレームワークのHTML埋込み用シリアライザーを使うか、独立したJSON応答から取得する。サーバー側のエスケープが正しくても、後から復元した文字列をHTMLに挿入する経路は調査対象になる。</p>
+        <p class="source"><a href="https://react.dev/reference/react-dom/components/common#dangerously-setting-the-inner-html">React公式</a> ／ <a href="https://vuejs.org/guide/best-practices/security.html">Vue公式</a> ／ <a href="https://angular.dev/best-practices/security">Angular公式</a> ／ <a href="https://docs.djangoproject.com/en/stable/topics/security/#cross-site-scripting-xss-protection">Django公式</a> ／ <a href="https://portswigger.net/web-security/cross-site-scripting/contexts">PortSwigger XSS contexts</a></p>
+    </section>
+
+    <section class="section" id="csp">
+        <h2>12. CSP・Trusted Types・sandboxを実測する</h2>
+        <p>適用されるのは、実行する文書が受け取ったポリシー。検査したリクエストとレスポンス、ブラウザー、フレームを対応させて保存する。CSPが原因で実行されないのか、そもそも実行可能なDOMになっていないのかを分けて調べる。</p>
+        <div class="table-scroll" role="region" aria-label="ブラウザーの防御と確認点" tabindex="0"><table>
+            <thead><tr><th>機構</th><th>確認すること</th><th>判断するときの条件</th></tr></thead>
+            <tbody>
+                <tr><td>Content-Security-Policy</td><td>強制適用のヘッダー、違反したdirective、実際のDOM。</td><td>複数のポリシーがあればすべて適用される。単に許可元を合算する読み方はできない。</td></tr>
+                <tr><td>Report-Only</td><td>Content-Security-Policy-Report-Onlyと強制適用の有無。</td><td>Report-Only単体のポリシーは違反を遮断しない。</td></tr>
+                <tr><td>nonce / hash</td><td>どのスクリプトに許可が付いているか。nonceの生成・再利用。</td><td>nonceは応答ごとに予測困難な値にする。実行を許された既存コードの使い方も対象になる。</td></tr>
+                <tr><td>strict-dynamic</td><td>信頼されたコードが動的に読み込むscriptのURL。</td><td>対応ブラウザーでは信頼が動的読込へ伝わる。URL生成を外部入力が左右するか確認する。</td></tr>
+                <tr><td>script-src 'self'</td><td>同じoriginからどんなscriptが配信されるか。</td><td>origin単位の許可であることを踏まえ、アプリのアップロードや既存の読込処理と照合する。</td></tr>
+                <tr><td>base-uri / object-src / connect-src</td><td>基準URL、文書埋込み、通信の制限。</td><td>それぞれのdirectiveが制御する処理を確認する。connect-srcだけから他の読込経路まで結論付けない。</td></tr>
+                <tr><td>Trusted Types</td><td>require-trusted-types-for、許可ポリシー、ポリシー内の処理。</td><td>型を生成する処理が安全な変換を行うか。対象sinkとブラウザーの対応も必要。</td></tr>
+                <tr><td>iframe sandbox</td><td>allow-scripts、allow-same-origin、フレームの実際のorigin。</td><td>スクリプト実行、origin、フォーム等は別の権限。許可の組み合わせを記録する。</td></tr>
+            </tbody>
+        </table></div>
+        <p>対策としては、不要なHTML解釈をなくす、許可したHTMLをサニタイズする、適切なCSPを強制する、対応環境でTrusted Typesを用いる、という各層を組み合わせる。入力からsinkまでの欠陥を修正し、CSPのブロックだけに結果が依存していないか再テストする。</p>
+        <p class="source"><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP">MDN CSP</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Web/API/Trusted_Types_API">MDN Trusted Types</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe#sandbox">MDN iframe sandbox</a> ／ <a href="01-browser-security.html">Browser Security教材</a></p>
+    </section>
+
+    <section class="section" id="uploads">
+        <h2>13. ファイルやSVGは表示方法を記録する</h2>
+        <p>アップロード時に送信するContent-Type、保存後に配信されるContent-Type、閲覧するブラウザーの文脈を別々に確認する。画像を受け付ける機能でも、ファイル名をHTMLで表示する一覧と、ファイルそのものを開く画面ではsourceもsinkも違う。</p>
+        <div class="table-scroll" role="region" aria-label="SVGの表示方法と確認条件" tabindex="0"><table>
+            <thead><tr><th>表示方法</th><th>確認する条件</th></tr></thead>
+            <tbody>
+                <tr><td>imgやCSSの画像としてSVGを読む</td><td>画像コンテキストではスクリプトは無効。ファイル本文がそのモードで表示されているかを確認する。</td></tr>
+                <tr><td>SVGのURLを直接開く</td><td>文書として配信するヘッダー、実際のorigin、CSP、認証Cookieの適用範囲。</td></tr>
+                <tr><td>iframe / object等で文書を埋め込む</td><td>文書側と親側のorigin、sandbox、CSP、親の埋込み許可。</td></tr>
+                <tr><td>HTML本文へSVGをインライン挿入</td><td>HTMLサニタイザーの設定、要素の名前空間、挿入経路と最終DOM。</td></tr>
+            </tbody>
+        </table></div>
+        <p>ファイルが別originで実行されても、主アプリの権限を持つかは追加の確認が必要になる。cookieのDomain属性、親とのpostMessage、共有している信頼関係を調べる。Content-Dispositionがattachmentなら通常はダウンロードになるため、実際の閲覧方法も再現手順へ含める。</p>
+        <p>アップロード対策は、必要な形式だけを受理し、内容を検証し、配信時にも正しいContent-Typeと必要な制限を設定する。受け取ったファイル名や説明の出力エンコードも別に行う。SVGのContent-Typeを見ただけで主アプリ内のコード実行まで結論付けない。</p>
+        <p class="source"><a href="https://developer.mozilla.org/en-US/docs/Web/SVG/Guides/SVG_as_an_image#restrictions">MDN SVG画像の制限</a> ／ <a href="https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/File_Upload_Cheat_Sheet.md">OWASP File Upload</a> ／ <a href="16-file-upload.html">File Upload教材</a></p>
+    </section>
+
+    <section class="section" id="impact">
+        <h2>14. 影響を確認し、再現できる報告にする</h2>
+        <p>XSSの型だけからseverityや報奨金は決められない。実行したorigin、到達するユーザー、権限、扱えるデータ、必要な操作と追加認証を根拠にする。PoCは、まず検査用データと検査アカウントで観察できる最小の実行証拠を用意する。</p>
+        <div class="table-scroll" role="region" aria-label="XSSの影響と実証する条件" tabindex="0"><table>
+            <thead><tr><th>影響の候補</th><th>確認する条件</th><th>残す証拠</th></tr></thead>
+            <tbody>
+                <tr><td>他ユーザーの画面内で実行</td><td>閲覧に必要な操作、攻撃者と閲覧者の関係。</td><td>Aの保存要求、Bの再現操作、originと専用マーカー。</td></tr>
+                <tr><td>情報の読取</td><td>そのoriginのスクリプトから読める検査データ。</td><td>検査用の値を読めた画面と、その値の権限条件。</td></tr>
+                <tr><td>ユーザー権限での操作</td><td>CSRF対策、再認証、MFA、権限チェック。</td><td>検査用の表示名など、合意した操作の前後。</td></tr>
+                <tr><td>担当者・管理者への到達</td><td>実際の担当者ロール、利用できる機能。</td><td>確認したロールと操作。未検証の機能は未検証と記す。</td></tr>
+                <tr><td>セッションやトークンへの影響</td><td>保存場所、HttpOnly、トークンの用途と有効期間。</td><td>実測した読取可否や操作可否。秘密値は共有前に伏せる。</td></tr>
+                <tr><td>キャッシュ等で複数人へ到達</td><td>キャッシュキー、有効期間、利用者の範囲。</td><td>異なる検査セッションでの取得結果と対象応答。</td></tr>
+            </tbody>
+        </table></div>
+        <h3>HttpOnly・CSRF・SOPをどう読むか</h3>
+        <p>HttpOnlyはJavaScriptによるCookie値の読取を制限する。条件が合うリクエストへのCookieの付与は続くので、同じoriginで実行できるコードは、その利用者の権限でAPIを呼べる場合がある。CSRFトークンを読めるか、重要操作に再認証があるかも調べる。</p>
+        <p>SOPはorigin間の読取を制限する。実行した場所が <code>uploads.example.test</code> なら、<code>app.example.test</code> のDOMや応答をそのまま読めるとは限らない。アカウント乗っ取りを報告する場合は、そのアカウントを継続して制御できる操作まで必要条件を説明する。</p>
+        <h3>記入して使う報告書テンプレート</h3>
+<pre><code>タイトル
+  機能名・入力欄・到達する閲覧者を含む短い説明
+
+対象と前提
+  URL、ビルド、ブラウザーとバージョン
+  検査アカウントA/Bのロール、必要な共有や公開設定
+
+再現手順
+  1. Aで対象機能を開く
+  2. 記載の入力を送る（メソッド、パス、本文、データID）
+  3. Bの別プロファイルで通常の閲覧操作をする
+  4. 専用マーカーと実行originを確認する
+
+観測結果
+  source → 変換 → sink
+  関連するHTTP応答、最終DOM、実行結果
+  CSP・sandbox、クリック等の追加操作
+
+影響
+  検査アカウントで確認した権限・データ・操作
+  追加条件、未確認部分、継続時間と閲覧者の範囲
+
+修正案と再テスト
+  出力文脈に合う対処、依存・設定の更新
+  既存保存データと別画面への適用
+  正常な表示を保つ確認ケース
+
+片付け
+  作成したデータのID、削除方法と残存確認</code></pre>
+        <p>同じ関数を直せば解消する複数の表示先は、共通原因と各到達経路を整理して報告する。別原因と判断する場合は、入力・sink・修正箇所がどこで分かれるかを示す。</p>
+        <p class="source"><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie#httponly">MDN HttpOnly</a> ／ <a href="https://portswigger.net/web-security/cross-site-scripting#impact-of-xss-vulnerabilities">PortSwigger XSS impact</a> ／ <a href="50-report-writing.html">Report Writing教材</a> ／ <a href="51-severity-cvss.html">Severity教材</a></p>
+    </section>
+
+    <section class="section" id="retest">
+        <h2>15. 修正後は同じ経路と正常表示を再テストする</h2>
+        <p>元の入力が画面から消えたら、どの処理が変わったかを確認する。修正を示す観測は、目印が文字として表示される、許可外の属性が消える、許可した装飾が残る、という要件に対応させる。</p>
+        <div class="table-scroll" role="region" aria-label="修正後の再テスト一覧" tabindex="0"><table>
+            <thead><tr><th>ケース</th><th>観察する結果</th></tr></thead>
+            <tbody>
+                <tr><td>元の入力を、元の画面で再送</td><td>原因だった構文境界を越えず、コードが実行されない。</td></tr>
+                <tr><td>元の閲覧者・操作で再訪</td><td>同じロール・ブラウザー・設定で修正が効く。</td></tr>
+                <tr><td>修正前に保存した値</td><td>既存データ、加工済みHTML、キャッシュも安全に表示される。</td></tr>
+                <tr><td>一覧・詳細・通知・編集・プレビュー</td><td>共通原因を持つ別の表示先にも修正が届く。</td></tr>
+                <tr><td>APIで作った値とUIで作った値</td><td>入口によらず、最終表示でポリシーが守られる。</td></tr>
+                <tr><td>引用符、山括弧、空白、日本語</td><td>テキスト表示の原文が保たれ、二重エンコードが起きない。</td></tr>
+                <tr><td>許可した強調・リンク</td><td>装飾やURLの正しい入力を利用できる。</td></tr>
+                <tr><td>サニタイズ後に別ライブラリを通す値</td><td>最終DOMでも許可した要素・属性・URLだけが残る。</td></tr>
+                <tr><td>複数の配信画面・フレーム</td><td>CSPとsandboxが意図した文書に適用される。</td></tr>
+                <tr><td>対象のブラウザーと依存バージョン</td><td>修正したパーサーやライブラリで期待する挙動になる。</td></tr>
+            </tbody>
+        </table></div>
+        <p>原因がHTML本文への未エスケープ出力なら、その出力処理を修正する。リッチテキストなら許可ポリシーを見直す。URLなら用途に合う許可検証を行う。「全入力から特定の文字を削る」という修正では、正しい日本語や記号の表示、他の出力文脈への適用も確認する。</p>
+        <p class="source"><a href="https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md">OWASP XSS Prevention</a> ／ <a href="25-incomplete-fix.html">Incomplete Fix教材</a></p>
+    </section>
+        <section class="section" id="field-exercises">
+            <h2>16. 調査の判断を練習する8問</h2>
+            <p>各問で、入力元、途中の変換、表示先、次に観察する証拠、修正案を一行ずつ書いてから解答を開こう。実際に確認できたことと、追加の確認が必要なことも記録する。</p>
+
+            <h3>1. 検索語がレスポンスに見つかった</h3>
+            <p>検索語に <code>&lt;b&gt;京都&lt;/b&gt;</code> を送ると、応答の本文に <code>&amp;lt;b&amp;gt;京都&amp;lt;/b&amp;gt;</code> があった。画面にもタグを含む文字が見える。この時点で何が分かり、次にどこを確認する？</p>
+            <details><summary>解答と照合する</summary><p>入力元は検索パラメーター。HTML エンコードされた値をブラウザーが本文の文字として表示している。次は Elements で生成されたノードと、JavaScript がこの値を読み戻す経路を確認する。後段の innerHTML への再代入があれば、そこで再評価する。本文表示の修正にはテンプレートの自動エンコードや textContent が適している。</p></details>
+
+            <h3>2. 挿入した script が動かない</h3>
+            <p>コードレビューで <code>preview.innerHTML = input.value</code> を見つけた。練習環境で script 要素を渡しても実行されなかった。この結果から何を判断し、調査をどう続ける？</p>
+            <details><summary>解答と照合する</summary><p>入力欄が source、代入時の HTML 解析が sink。innerHTML によって挿入した script 要素の通常の非実行は、この API の挙動と整合する。生成された要素・属性、CSP、必要なイベントまで追い、実行可能な経路を判断する。文字だけを表示する仕様なら textContent に変更し、タグが文字として残ることを確かめる。</p></details>
+
+            <h3>3. 投稿本文は JSON にしか見つからない</h3>
+            <p>利用者Aの投稿を利用者Bで開く。最初の HTML のリストは空で、後から取得した JSON に本文があり、JavaScript が <code>list.insertAdjacentHTML()</code> に渡していた。分類と修正の確認点は？</p>
+            <details><summary>解答と照合する</summary><p>source はAが保存した投稿で、JSON の解析後も投稿者が決めた値が残る。ブラウザー側の HTML 挿入が sink。実行可能性が確認できれば Stored DOM XSS と説明できる。Bの読み出しまで追い、文字表示なら textContent、装飾を許すなら表示仕様に合わせたサニタイズを適用し、最終 DOM を検証する。</p></details>
+
+            <h3>4. message の送信元を部分一致で見ている</h3>
+            <p>プレビュー画面は <code>event.origin.includes('example.com')</code> を通ったメッセージの <code>data.html</code> を HTML として挿入する。何を境界として確認し、どのように直す？</p>
+            <details><summary>解答と照合する</summary><p>source は message の data。部分一致では想定外のオリジンも通り得るため、許可した scheme・host・port の完全一致を確認する。固定の相手窓を持つ設計では event.source も照合し、データの型と構造を検証する。本文は仕様に従い textContent またはサニタイズ済みの構造を渡す。送信元の確認と出力処理を両方検証する。</p></details>
+
+            <h3>5. HttpOnly と CSP が設定されている</h3>
+            <p>セッション Cookie は HttpOnly、レスポンスには <code>Content-Security-Policy-Report-Only</code> がある。担当者は「この画面の XSS は影響を持たない」と考えた。証拠をどう整理する？</p>
+            <details><summary>解答と照合する</summary><p>入力から sink までの経路と実行結果を先に確かめる。HttpOnly の Cookie を JavaScript で読むことは制限されるが、同一オリジンへのリクエストには Cookie が送られ得る。Report-Only は違反の観測用。実際に適用される CSP、実行したオリジン、テスト利用者で確認できた読み取り・操作の範囲を記録し、根本の出力処理を直す。</p></details>
+
+            <h3>6. アップロードした SVG は画像として見える</h3>
+            <p>プロフィールでは SVG を img 要素で表示している。別の「原寸で開く」リンクはファイルを新しいタブで直接開く。アップロード機能の XSS を調べるとき、この2つで何を比べる？</p>
+            <details><summary>解答と照合する</summary><p>source はアップロードしたファイル。img の画像読み込みと、直接開く SVG 文書では実行の条件が異なる。各表示の URL・オリジン、Content-Type、Content-Disposition、CSP を記録し、アプリの権限に届く経路を確認する。修正案も表示方式に合わせ、画像変換や隔離配信、文書を表示する際の制限を検討する。</p></details>
+
+            <h3>7. サニタイズ後に装飾ライブラリを通している</h3>
+            <p>本文をサニタイズした直後には許可したタグだけが残る。その文字列を別のライブラリで装飾し、表示先に挿入すると DOM の構造が変わった。mXSS と判断するには何が必要？</p>
+            <details><summary>解答と照合する</summary><p>source は元の投稿、変換はサニタイズ・装飾・再解析、sink は最終挿入先。各段階の文字列と木を記録し、許可されていない実行可能な構造が生じるか確認する。装飾処理が元入力を連結する不具合と、解析差による mXSS は原因を追って区別する。表示直前までの処理順と文脈を見直し、最終 DOM を再テストする。</p></details>
+
+            <h3>8. 新しい投稿だけ安全になった</h3>
+            <p>修正後に投稿したテスト本文は正しく表示された。修正前の投稿、編集画面、管理者のプレビューはまだ確認していない。何を追加で試せば、再テスト結果を説明できる？</p>
+            <details><summary>解答と照合する</summary><p>保存済みの旧データも source に含め、一覧・詳細・編集・管理者プレビューの sink を確認する。新規入力だけの制限では既存値が残るため、読み出し時の処理も追う。修正前の再現手順と無害な正常値を同じ条件で試し、ブラウザー、役割、CSP、最終 DOM を記録する。既存投稿を含む表示処理の修正と機能維持を検証する。</p></details>
+        </section>
+
+    <section class="section" id="learning-route">
+        <h2>17. Academyへつなぐ学習ルート</h2>
+        <p>次の順で、最初は出力の見つけ方、その後は構文・依存・防御の条件を学ぶ。ラボを解いたら、使った入力に加えて「source → 変換 → sink」「必要な操作」「修正後の期待」を各1行で残す。</p>
+        <div class="table-scroll" role="region" aria-label="Academyの学習ルート" tabindex="0"><table>
+            <thead><tr><th>取り組む順</th><th>確認できるようにすること</th><th>教材・ラボ</th></tr></thead>
+            <tbody>
+                <tr><td>1. HTML本文</td><td>応答の反射位置を見つけ、ブラウザーの実行と結び付ける。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/reflected/lab-html-context-nothing-encoded">Reflected XSS基礎ラボ</a></td></tr>
+                <tr><td>2. 保存・別の閲覧者</td><td>入力した要求を繰り返さずに、保存値が届くことを確認する。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/stored/lab-html-context-nothing-encoded">Stored XSS基礎ラボ</a></td></tr>
+                <tr><td>3. DOMのHTML解釈先</td><td>innerHTMLとdocument.writeの呼出し、実行条件を比べる。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/dom-based/lab-innerhtml-sink">innerHTMLラボ</a> ／ <a href="https://portswigger.net/web-security/cross-site-scripting/dom-based/lab-document-write-sink">document.writeラボ</a></td></tr>
+                <tr><td>4. 属性・URL</td><td>引用符の処理と、URLのスキーム検証を分ける。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/contexts">XSS contextsの属性節</a></td></tr>
+                <tr><td>5. JS文字列・テンプレート</td><td>HTMLとJSの解析順序、式の評価位置を説明する。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/contexts#xss-into-javascript">XSS into JavaScript</a></td></tr>
+                <tr><td>6. Reflected DOM・Stored DOM</td><td>サーバーからの値を使うブラウザーコードを追う。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/dom-based#dom-xss-combined-with-reflected-and-stored-data">DOM XSS combined with reflected and stored data</a></td></tr>
+                <tr><td>7. 古い依存とテンプレート式</td><td>jQueryやAngularJSのバージョン・呼出し方・評価箇所を調べる。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/dom-based#sources-and-sinks-in-third-party-dependencies">Third-party dependencies</a></td></tr>
+                <tr><td>8. タグや属性の制限</td><td>残る構文とブラウザーのイベント条件を整理する。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/cheat-sheet">XSS Cheat Sheet</a></td></tr>
+                <tr><td>9. CSP・dangling markup</td><td>ポリシーとデータの流れを読み、示せた影響を説明する。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/content-security-policy">CSP</a> ／ <a href="https://portswigger.net/web-security/cross-site-scripting/dangling-markup">Dangling markup</a></td></tr>
+                <tr><td>10. 影響実証</td><td>被害者役のロール、読取・操作、追加認証の条件を記録する。</td><td><a href="https://portswigger.net/web-security/cross-site-scripting/exploiting">Exploiting XSS</a></td></tr>
+            </tbody>
+        </table></div>
+        <p>mXSSはサニタイザーとパーサーの条件を調べる発展テーマとして <a href="#sanitizers">本ガイドの検証観点</a>と組み合わせる。ラボの既知の解法は、そのバージョンと画面の条件に対応している。実際の診断でも同じ条件かを観測して確かめる。</p>
+        <details><summary>初見の機能でも調べられるか、最後に確認する</summary>
+            <ul>
+                <li>入力した人と閲覧する人、必要な操作を説明できる。</li>
+                <li>HTTP応答と最終DOMのどちらに入力があるか確認できる。</li>
+                <li>値を最後に解釈するAPIと、その呼び出し元を見つけられる。</li>
+                <li>変換、サニタイズ、CSPのどこで結果が変わったかを説明できる。</li>
+                <li>実測した影響、必要な条件、未検証部分を報告に書ける。</li>
+                <li>既存データと正常表示を含む再テストを用意できる。</li>
+            </ul>
+        </details>
+    </section>
+    <nav class="page-nav"><a href="10-xss.html">← XSS基礎と公開レポート</a><a href="../labs/xss-flow.html">データフロー実習 →</a></nav>
+</main>
+</body>
+</html>
