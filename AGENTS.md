@@ -7,3 +7,5 @@
 XSS は modules/10-xss.html で用語を確認し、入力経路・サニタイザー・再解析は labs/xss-flow.html、表示方法の反復練習は labs/xss.html を使う。Reflected と Stored の HTTP 実習は python3 labs/xss_http.py で起動する。学習者が選んだ一問について、入力元と期待する表示を予想してもらい、操作後に観察結果と解説を照合する。一度に全問の正答を開示しない。
 
 実務のXSS調査は modules/10-xss-practical.html を参照する。入力の棚卸しから報告と再テストまで17項目とケース問題8問がある。操作方法は対象節、判断の練習は #field-exercises、次の公式ラボの選択は #learning-route を使う。HTML実習とケース問題の観察結果から、実際に確認できたことを言語化してもらう。
+
+ブラウザーで実行条件を確かめたい場合は labs/xss-contexts.html の9問を使う。各問のproof()はsandboxed iframe内の実行マーカーで、実サイトの権限や別利用者への到達は別に検証する。重なる文脈、SSRのJSON、CSP読解、origin/site、DOM clobbering、URL許可設計は modules/10-xss-browser.html を参照する。mXSSの公開修正を読む課題は modules/10-xss-practical.html#sanitizer-patch-reading にある。

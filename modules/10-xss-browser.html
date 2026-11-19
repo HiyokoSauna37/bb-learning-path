@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+    <title>XSS 発展編 — ブラウザーの解釈とコードレビュー</title>
+    <link rel="stylesheet" href="../assets/style.css">
+    <style>
+        .contents { padding: 1.1rem 1.3rem; margin: 1.5rem 0 2rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+        .contents ol { columns: 2; column-gap: 2rem; }
+        .contents li { break-inside: avoid; }
+        .section { scroll-margin-top: 1rem; }
+        .section p + p { margin-top: .7rem; }
+        .section details { border: 1px solid var(--border); border-radius: 6px; padding: .8rem 1rem; margin: .8rem 0; }
+        summary { cursor: pointer; color: var(--accent); }
+        details[open] summary { margin-bottom: .65rem; }
+        .table-scroll { overflow-x: auto; margin: 1rem 0; }
+        .table-scroll table { min-width: 640px; margin: 0; }
+        th, td { vertical-align: top; }
+        .source { font-size: .85rem; color: var(--text-muted); }
+        pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+        .breadcrumb, .page-nav { flex-wrap: wrap; gap: .7rem; }
+        :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+        @media (max-width: 600px) { .contents ol { columns: 1; } }
+    </style>
+</head>
+<body>
+<main class="container">
+    <nav class="breadcrumb"><a href="../index.html">Top</a> &gt; <a href="10-xss.html">XSS基礎</a> &gt; 発展編</nav>
+    <header class="page-header">
+        <h1>XSS 発展編</h1>
+        <p class="subtitle">ブラウザーの解釈順序、権限の境界、既存コードの使い方から調べる。</p>
+    </header>
+    <p><a href="10-xss-practical.html">実務ガイド</a>で調査の流れを覚えたら、「なぜその入力がその場で解釈されたか」をコードで説明してみよう。このページでは、フレーム、HTMLとJavaScriptの重なり、CSP、URL生成、画面の更新経路を掘り下げる。<a href="../labs/xss-contexts.html">ブラウザーで出力コンテキストを比べる実習</a>と行き来しながら読むと、予想と実測を照合できる。</p>
+    <nav class="contents" aria-label="発展編の目次">
+        <ol>
+            <li><a href="#origin-site">origin・site・Cookieとフレーム</a></li>
+            <li><a href="#nested-context">重なった解釈先</a></li>
+            <li><a href="#boot-json">SSRの初期JSON</a></li>
+            <li><a href="#read-csp">CSPのポリシーを読む</a></li>
+            <li><a href="#named-access">DOM clobberingと既存コード</a></li>
+            <li><a href="#url-policy">MarkdownとURLの許可設計</a></li>
+            <li><a href="#render-paths">Shadow DOMとSPAの再描画</a></li>
+            <li><a href="#review-exercises">修正案をレビューする4問</a></li>
+        </ol>
+    </nav>
+
+    <section class="section" id="origin-site">
+        <h2>1. origin・site・Cookieは何を分けるか</h2>
+        <p>アプリが <code>https://app.example.test</code>、アップロード先が <code>https://files.example.test</code> にあるとする。ファイル側でスクリプトが動いたとき、主アプリのデータに届くかを説明するには、URLとCookieを別々に読む必要がある。</p>
+        <div class="table-scroll" role="region" aria-label="originとsiteの比較" tabindex="0"><table>
+            <thead><tr><th>2つのURL</th><th>origin</th><th>schemeも考慮するsite</th></tr></thead>
+            <tbody>
+                <tr><td>https://app.example.test/a<br>https://app.example.test/b</td><td>同じ。pathはoriginに含まれない。</td><td>同じ。</td></tr>
+                <tr><td>https://app.example.test<br>https://files.example.test</td><td>hostが異なる。</td><td>同じ。登録可能なドメインとschemeが共通。</td></tr>
+                <tr><td>https://app.example.test<br>https://app.example.test:8443</td><td>portが異なる。</td><td>同じ。siteの判定にportは含まれない。</td></tr>
+                <tr><td>https://app.example.test<br>http://app.example.test</td><td>schemeが異なる。</td><td>schemeを含める判定では異なる。</td></tr>
+            </tbody>
+        </table></div>
+        <p><strong>Origin</strong>は通常scheme・host・portの組で、SOPによるDOMや応答の読取に関係する。<strong>Site</strong>はCookieのSameSite等に使う区分で、登録可能なドメインとschemeが関係する。<code>co.jp</code> のような公開サフィックスもあるため、文字列を末尾から2語取るだけでsiteを求めることはできない。</p>
+        <p>CookieはDomain、Path、Secure、SameSite等で送信条件が決まる。Domainを省略したCookieは設定元hostに限定され、Domain属性を指定した場合は条件の合うサブドメインにも送られる。Cookieにはportを限定する属性がない。同じsiteであっても、別originのDOMを直接読む権限まで得るわけではない。</p>
+        <h3>iframe内で動いた証拠をどう評価する？</h3>
+<pre><code>&lt;iframe sandbox="allow-scripts" srcdoc="..."&gt;&lt;/iframe&gt;</code></pre>
+        <p>このフレームはスクリプト実行を許し、<code>allow-same-origin</code> を付けていないのでopaque originとして扱われる。opaque originは通常のscheme・host・portで表せないoriginで、postMessageで届く <code>event.origin</code> は文字列 <code>"null"</code> になる。主アプリの画面と同じタブ内に見えることから、主アプリと同じ権限で実行したとは結論付けられない。</p>
+        <p>観察ではDevToolsの実行対象フレームを確認し、URL、sandbox属性、受信したメッセージのorigin、親DOMへのアクセス結果を組にする。<code>about:srcdoc</code> のような特殊URLは、表示URLだけから文書の実効originを決め付けない。ファイルを直接開く <code>file:</code> のoriginの扱いにもブラウザー差がある。</p>
+        <p class="source"><a href="https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Same-origin_policy">MDN Same-origin policy</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Glossary/Site">MDN Site</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie">MDN Set-Cookie</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe#sandbox">MDN iframe sandbox</a></p>
+    </section>
+
+    <section class="section" id="nested-context">
+        <h2>2. HTMLとJavaScriptが重なる場所を読む</h2>
+        <p>次のボタンでは、HTML属性の中にJavaScriptがあり、その中に文字列がある。<code>USER_INPUT</code> に、引用符を含む氏名が入った場合を予想しよう。</p>
+<pre><code>&lt;button onclick="showName('USER_INPUT')"&gt;名前を表示&lt;/button&gt;</code></pre>
+        <ol>
+            <li>HTMLパーサーがダブルクォートで囲まれた属性を読み、属性値の実体参照を解釈する。</li>
+            <li>ボタンを操作したとき、イベントハンドラーのJavaScriptが実行される。</li>
+            <li>JavaScriptはシングルクォートで囲まれた文字列の構文を解釈する。</li>
+        </ol>
+        <p>HTML属性の境界を守るエンコードをしても、デコード後の引用符がJavaScript文字列の境界に関係する。逆に、JS用のエスケープだけでは、その外側のHTML属性の構文まで保証できない。レビューでは「何回エンコードしたか」に加え、各段階の文字列と、次に読む文法を記録する。</p>
+        <h3>値の受け渡しをコードから外す</h3>
+<pre><code>// ボタンと表示先はアプリが固定した要素
+const button = document.querySelector('#show-name');
+const output = document.querySelector('#name');
+const personName = user.displayName;
+
+button.addEventListener('click', () =&gt; {
+    output.textContent = personName;
+});</code></pre>
+        <p>この実装では関数を登録し、名前は既存の変数として扱う。<code>showName('...')</code> というコード文字列を入力から生成する箇所が消える。修正後は、引用符、改行、日本語を含む氏名が原文どおり表示されることを確認する。</p>
+        <h3>URLとHTML属性も2段階になる</h3>
+        <p><code>&lt;a href="/search?q=USER_INPUT"&gt;</code> のようにURL部品を埋める場合、まずクエリ値として表現し、そのURLをHTML属性へ埋める文脈も守る。DOM APIを使える場合は固定したURLを作り、<code>searchParams.set()</code> で値を設定し、固定したa要素のhrefへ渡す。</p>
+<pre><code>const link = document.querySelector('#search-link');
+const url = new URL('/search', location.origin);
+url.searchParams.set('q', userInput);
+link.href = url.href;
+link.textContent = 'この語で検索';</code></pre>
+        <p>この例はアプリ内の検索リンクを作る仕様。入力としてURL全体を受け付ける仕様では、許可するschemeとoriginの検査が別に必要になる。</p>
+        <p class="source"><a href="https://portswigger.net/web-security/cross-site-scripting/contexts#making-use-of-html-encoding">PortSwigger HTML encodingとJS文脈</a> ／ <a href="https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md">OWASP XSS Prevention</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams/set">MDN URLSearchParams.set</a></p>
+    </section>
+
+    <section class="section" id="boot-json">
+        <h2>3. SSRの初期JSONは、誰が先に読むか</h2>
+        <p>SSRでは初期表示用のデータをHTMLへ埋め、ブラウザー側でJSONとして読むことがある。次の文書を見て、JSONを読む前にHTMLの構造がどう作られるか予想しよう。</p>
+<pre><code>&lt;script id="boot" type="application/json"&gt;
+{"note":"&lt;/script&gt;&lt;p id=proof&gt;校正用&lt;/p&gt;"}
+&lt;/script&gt;</code></pre>
+        <p>ブラウザーはまずHTMLを解析する。script要素の内部では、JSONの文字列に入っているつもりの <code>&lt;/script&gt;</code> もHTMLの終端として働く。このためデータブロックが途中で閉じ、p要素が外側に生成される。その後のJSON.parseでは、不完全になったJSONがエラーになる。</p>
+        <p><code>type="application/json"</code> はその内容をJavaScriptとして実行する指定ではないが、HTMLパーサーの終端の扱いは考慮する必要がある。<code>JSON.stringify()</code> はJSONとしての引用符や改行を処理するため、HTMLへ埋める条件も扱うシリアライザーが必要になる。</p>
+        <h3>埋込み時の文字列と、読み戻した値を比べる</h3>
+<pre><code>// サーバーでHTML埋込み用のJSON文字列を作る例
+// まずJSONとしてシリアライズし、その結果に残る &lt; を表現し直す
+const serialized = JSON.stringify(order).replaceAll('&lt;', '\\u003c');
+
+// HTMLには次のようなJSON文字列が入る
+// {"note":"\u003c/script&gt;\u003cp id=proof&gt;校正用\u003c/p&gt;"}</code></pre>
+        <p>HTML中にscript終端を始める山括弧が残らなくなり、JSON.parseで読み戻すと元の文字に復元される。テンプレートへ渡すときは、フレームワークが用意するHTML埋込み用JSON機能を優先し、戻り値を何に挿入する設計かまで確認する。これはJSONのデータブロック向けの話で、イベント属性やJSのテンプレートソースへ流用する設計は別にレビューする。</p>
+        <p>独立した <code>application/json</code> のAPI応答から取得する構成も選べる。その場合も、復元したnoteを表示するsinkで適切に扱う。エンコードが保たれたかと、文字としての原文が保たれたかを両方テストする。</p>
+        <p><a href="10-xss-practical.html#sanitizer-patch-reading">次に読む　DOMPurifyのmXSS修正と回帰テスト</a></p>
+        <p class="source"><a href="https://html.spec.whatwg.org/multipage/scripting.html#restrictions-for-contents-of-script-elements">HTML Standard script要素の内容制約</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/script">MDN script要素</a> ／ <a href="https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md">OWASP XSS Prevention</a></p>
+    </section>
+
+    <section class="section" id="read-csp">
+        <h2>4. CSPを具体的なポリシーから読む</h2>
+        <p>以下は読解用の例。実運用ではnonceを応答ごとに予測困難な値として生成し、ヘッダーと許可するscriptのnonce属性に同じ値を設定する。</p>
+<pre><code>Content-Security-Policy:
+  default-src 'none';
+  script-src 'nonce-EXAMPLE_RANDOM_VALUE' 'strict-dynamic';
+  script-src-attr 'none';
+  img-src 'self';
+  connect-src 'self';
+  style-src 'self';
+  base-uri 'none';
+  object-src 'none'
+
+&lt;script nonce="EXAMPLE_RANDOM_VALUE" src="/app.js"&gt;&lt;/script&gt;</code></pre>
+        <p>ヘッダーの改行は説明用。次の表は、この強制ポリシーを対応ブラウザーが受け取り、別のCSPを併用していない条件で読む。</p>
+        <div class="table-scroll" role="region" aria-label="CSPの読解結果" tabindex="0"><table>
+            <thead><tr><th>処理</th><th>この例での判断</th><th>根拠</th></tr></thead>
+            <tbody>
+                <tr><td>一致するnonceを持つapp.js</td><td>読み込みと実行を許可する。</td><td>script-srcのnonceに一致する。</td></tr>
+                <tr><td>パーサーが読むHTMLに埋め込まれたnonceのないscript</td><td>そのscriptの実行を拒否する。</td><td>許可するnonceやhashを持たない。</td></tr>
+                <tr><td>onclick等のイベント属性</td><td>実行を拒否する。</td><td>script-src-attr 'none' が対象。要素にnonce属性を付けてもイベント属性の許可にはならない。</td></tr>
+                <tr><td>許可されたapp.jsがscript要素を作って追加</td><td>strict-dynamicで信頼が伝わり得る。</td><td>信頼されたscriptによる動的な読込。そこで使うURLが外部入力に左右されるかも調査する。</td></tr>
+                <tr><td>文字列を渡すevalやFunction</td><td>実行を拒否する。</td><td>この例には文字列評価を許可するunsafe-eval等がない。</td></tr>
+                <tr><td>他originへのfetch</td><td>connect-srcの制限で拒否する。</td><td>同じoriginへの接続だけを許可している。</td></tr>
+            </tbody>
+        </table></div>
+        <h3>directiveが省略されていたら</h3>
+        <p>イベント属性には <code>script-src-attr</code>、script要素には <code>script-src-elem</code> が使われる。各directiveがない場合は <code>script-src</code>、それもなければ <code>default-src</code> にフォールバックする。個別directiveに明示した制限と、フォールバック先の制限を単純に合算する読み方はできない。</p>
+        <p>上の例で <code>script-src-attr 'none'</code> を消しても、フォールバック先のscript-srcが通常のイベント属性を許可する条件を持たないため、そのイベントは実行されない。実際の診断では、対応ブラウザー、違反ログに出るdirective、配信されたヘッダーを照合する。</p>
+        <h3>Report-Onlyと複数ポリシー</h3>
+        <p>同じ内容を <code>Content-Security-Policy-Report-Only</code> で配信した場合は、そのポリシーの違反を理由に処理を遮断しない。一方、強制ポリシーを複数配信した場合は、それぞれの制約を満たす必要がある。Report-Onlyの通知と、強制ポリシーによるブロックのどちらを見ているかを切り分ける。Report-Onlyはmeta要素での指定に対応しないので、HTTPレスポンスヘッダーで検証する。</p>
+        <p class="source"><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/script-src">MDN script-src</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/script-src-attr">MDN script-src-attr</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/script-src-elem">MDN script-src-elem</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy-Report-Only">MDN Report-Only</a></p>
+    </section>
+
+    <section class="section" id="named-access">
+        <h2>5. DOM clobberingは既存コードの参照先を追う</h2>
+        <p>HTMLのidやnameから、WindowやDocumentに名前付きの参照が作られる場合がある。たとえば、次の要素が存在し、同じ名前のアプリ設定がまだ定義されていない場面を考える。</p>
+<pre><code>&lt;a id="nextPage" href="/review"&gt;確認へ&lt;/a&gt;
+
+&lt;script&gt;
+  const destination = window.nextPage || '/home';
+  console.log(typeof destination, String(destination));
+&lt;/script&gt;</code></pre>
+        <p>この条件では <code>window.nextPage</code> がa要素を指し、その要素を文字列に変換すると解決済みのhrefが得られる。コードが期待した「アプリが決めた文字列」と、実際に読んだ値の型がずれる。自分でHTMLを追加しても、該当する名前を使う既存コードがなければ、この経路は成立しない。</p>
+        <p>さらにその値を遷移先やscriptの読込先に使うコードがあれば、どこまで入力が影響するかを調べる。HTMLの追加、名前付き参照への影響、参照後の使い方を順に記録する。重複したidやform要素の参照では戻る値の形が変わることもあるため、実ブラウザーで型とプロパティを確認する。</p>
+        <h3>設定をアプリの変数として管理する</h3>
+<pre><code>// 外部から生成した要素名を設定の参照に使わない構成
+const settings = Object.freeze({
+    nextPath: '/review'
+});
+const destination = new URL(settings.nextPath, location.origin);</code></pre>
+        <p>この変数はコードが持つ設定を参照する。HTMLを受け付ける仕様なら、サニタイザーでid・nameをどこまで許すかも見直す。DOMPurifyには、カスタム名を含む名前付きプロパティの衝突を抑える <code>SANITIZE_NAMED_PROPS</code> 設定がある。設定追加後は、本文内リンクやラベル参照など、idに依存していた正常機能も再テストする。</p>
+        <p class="source"><a href="https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/DOM_Clobbering_Prevention_Cheat_Sheet.md">OWASP DOM Clobbering Prevention</a> ／ <a href="https://portswigger.net/web-security/dom-based/dom-clobbering">PortSwigger DOM clobbering</a></p>
+    </section>
+
+    <section class="section" id="url-policy">
+        <h2>6. Markdownやリンク化のURLポリシーを作る</h2>
+        <p>コメントのMarkdownからリンクを作る場合、表示ラベル、URL全体、生成したHTML属性にそれぞれの要件がある。たとえば「相対URLとアプリ内のHTTPS URLを許し、ユーザー名・パスワードを含むURLは拒否する」と仕様を決める。</p>
+        <div class="table-scroll" role="region" aria-label="URLを解析して確認する例" tabindex="0"><table>
+            <thead><tr><th>入力</th><th>固定した基準URLからの解析</th><th>この仕様での扱い</th></tr></thead>
+            <tbody>
+                <tr><td><code>/docs?q=tea</code></td><td>app.example.test内のURL。</td><td>許可する。</td></tr>
+                <tr><td><code>//files.example.test/doc</code></td><td>schemeを基準URLから受け継ぎ、hostはfiles.example.testになる。</td><td>許可originと一致しないので拒否する。</td></tr>
+                <tr><td><code>https://app.example.test@other.test/doc</code></td><td>hostはother.test、app.example.testはusername。</td><td>originと資格情報の条件で拒否する。</td></tr>
+                <tr><td><code>https://app.example.test:8443/doc</code></td><td>既定portのアプリとは別origin。</td><td>許可originと一致しないので拒否する。</td></tr>
+            </tbody>
+        </table></div>
+        <h3>解析した結果に仕様を適用する</h3>
+<pre><code>function allowedCommentURL(raw) {
+    const appOrigin = 'https://app.example.test';
+    let url;
+    try {
+        url = new URL(raw, appOrigin + '/');
+    } catch {
+        return null;
+    }
+    if (url.protocol !== 'https:' || url.origin !== appOrigin) {
+        return null;
+    }
+    if (url.username || url.password) {
+        return null;
+    }
+    return url;
+}
+
+const url = allowedCommentURL(markdownLink.destination);
+if (url) {
+    const link = document.createElement('a');
+    link.href = url.href;
+    link.textContent = markdownLink.label;
+    output.append(link);
+}</code></pre>
+        <p>基準URLをアプリが固定しているので、ページにあるbase要素や、コメント内の文字列で基準を変更されない。実装時には <code>appOrigin</code> を配信環境に合う設定へ置き換える。外部HTTPSリンクも許す仕様なら、許可originの条件をその仕様に合わせて設計する。</p>
+        <p>MarkdownライブラリのURL検査、生成したHTMLを処理するサニタイザー、クリック時にリンクを加工するコードまで追う。外部リンクを拒否する判定が、後段で別のURLへ置換されていないか確認する。表示ラベルをtextContentに入れると、ラベルに含むタグは文字として表示される。</p>
+        <p class="source"><a href="https://developer.mozilla.org/en-US/docs/Web/API/URL/URL">MDN URLコンストラクター</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Web/API/URL">MDN URLの各プロパティ</a> ／ <a href="https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md#output-encoding-for-url-contexts">OWASP URL文脈</a></p>
+    </section>
+
+    <section class="section" id="render-paths">
+        <h2>7. Shadow DOMとSPAは、描画経路を分けて調べる</h2>
+        <p>カスタム要素のレビュー画面で、目印が <code>document.querySelector()</code> に見つからないとする。Shadow DOMはコンポーネント内の木を分ける仕組みなので、通常のdocumentのセレクターはその境界を越えて検索しない。Elementsでカスタム要素を開き、shadow rootやslotを確認する。</p>
+<pre><code>// openモードのshadow rootをアプリが作る例
+const host = document.querySelector('review-card');
+const root = host.attachShadow({ mode: 'open' });
+const note = document.createElement('p');
+note.textContent = userNote;
+root.append(note);</code></pre>
+        <p>同じoriginのコードから <code>host.shadowRoot</code> を参照できる。この中でもinnerHTML等を使えば値をHTMLとして解釈する。closedモードも同一origin内のカプセル化として扱う。コンポーネントの描画関数と受け取る値をレビューする。</p>
+        <div class="table-scroll" role="region" aria-label="SPAで比較する操作" tabindex="0"><table>
+            <thead><tr><th>操作</th><th>確認する処理</th><th>残す証拠</th></tr></thead>
+            <tbody>
+                <tr><td>URLを直接開いて初期表示</td><td>SSRのHTML、初期データ、hydration。</td><td>最初のHTTP応答と、操作前のDOM。</td></tr>
+                <tr><td>一覧から詳細へ内部遷移</td><td>ルーター、API取得、コンポーネントの描画。</td><td>取得APIと挿入時のcall stack。</td></tr>
+                <tr><td>編集してプレビューへ切替</td><td>ローカルのMarkdown変換や一時データ。</td><td>保存前の値と、プレビューのDOM。</td></tr>
+                <tr><td>再読み込み・戻る・キャッシュから復元</td><td>保存値、状態復元、キャッシュ済みHTML。</td><td>値の復元元と、再び表示する処理。</td></tr>
+            </tbody>
+        </table></div>
+        <p>同じ画面名でも、初期表示と内部遷移で異なるコードを通る場合がある。修正後は、問題が起きた遷移手順とURL直接表示を両方試し、入力の原文と許可した装飾が保たれるかを確認する。</p>
+        <p class="source"><a href="https://developer.mozilla.org/en-US/docs/Web/API/Web_components/Using_shadow_DOM">MDN Using shadow DOM</a> ／ <a href="https://react.dev/reference/react-dom/client/hydrateRoot">React hydrateRoot</a> ／ <a href="10-xss-practical.html#dom-debug">実務編のDOMデバッグ手順</a></p>
+    </section>
+
+    <section class="section" id="review-exercises">
+        <h2>8. 修正案をレビューする4問</h2>
+        <p>解答を開く前に、仕様を満たす表示と、削除できた解釈段階を言葉にしよう。実装者が直した行だけでなく、値が届く経路も確認する。</p>
+        <h3>① イベント属性の引用符をHTMLエンコードした</h3>
+        <p><code>onclick="showName('USER_INPUT')"</code> の入力をHTML属性用にエンコードした。属性を壊せなくなったので修正完了と判断した。追加で何を確認し、どう設計し直す？</p>
+        <details><summary>解答と照合する</summary><p>HTML解析後の属性値を、さらにJavaScriptが読む。イベント属性に残ったコードと、文字列の引用符を確認する。固定したaddEventListenerの関数へ値を変数として渡す構成にすれば、外部入力からコード文字列を作る段階を除ける。引用符を含む正常な名前も表示できるか再テストする。</p></details>
+
+        <h3>② JSON.stringifyの結果をscript要素へ入れた</h3>
+        <p>開発者は「JSONとして有効なら安全」と考えた。サーバーが作ったHTMLの初期データに <code>&lt;/script&gt;</code> を含む文字列が届く。どのパーサーが先に動く？</p>
+        <details><summary>解答と照合する</summary><p>先にHTMLが解析され、文字列中のscript終端でも要素が閉じる場合がある。HTML埋込み用のJSONシリアライザーを使い、最初の文書のDOMと読み戻した値を確認する。独立したJSON応答を選ぶ方法もある。どちらでも、値を最終表示するsinkは別に検証する。</p></details>
+
+        <h3>③ URLを正規表現で検査してからリンクにした</h3>
+        <p>許可条件は「アプリ内のHTTPSリンク」。コードはURL文字列に <code>app.example.test</code> が含まれることを確認している。userinfo、port、相対URLを含む入力の期待結果をどう定める？</p>
+        <details><summary>解答と照合する</summary><p>固定した基準URLから解析し、protocolとoriginを仕様どおりに比較する。資格情報を持つURLを拒否し、相対URLを許すかを明示する。文字列中のアプリ名がhostを表すとは限らない。ラベルの表示もtextContent等で保護し、リンク作成後のURLプロパティを検証する。</p></details>
+
+        <h3>④ CSPでイベント属性がブロックされた</h3>
+        <p>入力の挿入先は引き続きinnerHTMLで、強制CSPがインラインハンドラーを拒否する。Report-Onlyへ移行したらどうなるか、修正が仕様を満たすかをどう確認する？</p>
+        <details><summary>解答と照合する</summary><p>Report-Only単体は同じポリシー違反を遮断しないため、HTML解釈先に残る実行可能な構造を再評価する。文字表示ならtextContent、装飾が必要なら許可したHTMLのサニタイズを適用する。最終DOM、通常の表示、実際に強制したポリシーをそれぞれ確認する。</p></details>
+    </section>
+    <nav class="page-nav"><a href="10-xss-practical.html">← XSS実務ガイド</a><a href="../labs/xss-contexts.html">ブラウザー実習 →</a></nav>
+</main>
+</body>
+</html>

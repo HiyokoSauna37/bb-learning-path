@@ -33,6 +33,7 @@
         <p class="subtitle">Webペネトレーションテストとバグバウンティで、入力を探し、実行条件を確認し、修正まで説明する。</p>
     </header>
     <p>基礎編の source・sink・sanitizer を、実際の画面とHTTP通信に結び付ける。ここでは、検査用アカウントAの投稿をアカウントBが読む場面を軸に、観測結果から判断する手順を学ぶ。基礎用語は <a href="10-xss.html#data-flow">データフローの説明</a>、操作に慣れたい場合は <a href="../labs/xss-flow.html">ローカル実習</a>を参照。</p>
+    <p><a href="../labs/xss-contexts.html">コンテキスト実験室の9問</a> ／ <a href="10-xss-browser.html">発展編　解析順序・CSP・URL・コードレビュー</a></p>
     <nav class="contents" aria-label="実務ガイドの目次">
         <ol>
             <li><a href="#workflow">診断の進め方</a></li>
@@ -239,6 +240,17 @@ output.innerHTML = value;
 output.textContent = value;</code></pre>
         <p>この例では <code>searchParams.get()</code> が値を読む入口で、<code>innerHTML</code> のsetterがHTML解析を始める。<code>JSON.parse()</code>、<code>decodeURIComponent()</code>、Base64の復元処理は、前後にあってもHTMLサニタイザーとしては働かない。</p>
         <p>BurpのDOM Invaderは、source・sinkの観察やpostMessage調査を補助する。自動検出後も、手動操作での到達、実際の呼び出し値、必要な操作を保存する。ライブラリのsink一覧は <a href="10-xss.html#data-flow">基礎編</a>と合わせて読む。</p>
+        <h3>入力がDOMに現れないコード評価を追う</h3>
+        <p>URL由来の値が <code>eval()</code>、<code>Function()</code>、文字列を受け取るタイマーへ渡る場合は、目印がElementsに現れないことがある。まずSourcesで <code>location.search</code> などのsourceを読む行を探し、そこで停止して変数の値と呼び出し先を追う。</p>
+        <ol>
+            <li>URLSearchParams、API応答など、外部入力を読み取る行にブレークポイントを置く。</li>
+            <li>目印だけを入力して、その値を使う画面操作を行う。初期処理なら再読み込みする。</li>
+            <li>Step intoとcall stackで、連結・デコード・JSON解析などの変換と引数の値を記録する。</li>
+            <li>コードを評価する呼び出しに到達したら、入力がコード全体、文字列の一部、通常の関数引数のどれかを確認する。構文エラーとCSP違反も併せて記録する。</li>
+            <li>ラボで最小の実行マーカーを確認し、値をデータとして受け取る実装へ修正した後、同じ操作で再テストする。</li>
+        </ol>
+        <p>たとえば <code>setTimeout(showMessage, 200, message)</code> は関数に値を引数として渡す。一方、<code>setTimeout(message, 200)</code> に文字列を渡す実装では、その文字列をコードとして扱う。API名だけで結論を出さず、実行時の引数まで読む。</p>
+        <p class="source"><a href="https://portswigger.net/web-security/cross-site-scripting/dom-based#testing-javascript-execution-sinks">PortSwigger JavaScript execution sinks</a> ／ <a href="https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout#passing_string_literals">MDN setTimeoutの文字列引数</a></p>
         <h3>名前付きDOM参照も確認する</h3>
         <p>DOM clobberingでは、要素のidやnameが <code>window</code> などの名前付き参照に影響し、既存のコードが想定外の要素を設定値として読む場合がある。たとえば <code>window.appConfig</code> を参照するコードなら、その値がアプリ自身のオブジェクトであることをどこで保証するかを見る。HTMLを追加できることに加え、その名前を読むコードと、URLや実行先に使われる経路が成立条件になる。</p>
         <p class="source"><a href="https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/DOM_Clobbering_Prevention_Cheat_Sheet.md">OWASP DOM Clobbering Prevention</a></p>
@@ -288,6 +300,18 @@ window.addEventListener('message', event =&gt; {
             <li>表示先の要素・名前空間で再解析された最終DOMと実行結果。</li>
         </ol>
         <p>ブラウザーがtbodyを補うような通常の構造変化だけでは、mXSS成立を判断できない。検査時には除外したはずの実行可能な構造が後から生じるかを確認する。過去のbypassを読む場合も、その時点のサニタイザー・設定・ブラウザーの条件を添える。対策は依存の更新に加え、処理済みの内容を後から無制限に加工する経路の見直しになる。</p>
+        <h3 id="sanitizer-patch-reading">公開されたmXSSの修正を読む</h3>
+        <p>DOMPurifyのCVE-2024-47875は、深い入れ子に関係するmXSSとして公開された。公式アドバイザリの修正履歴は、2.x系で <code>2.5.0</code>、3.x系で <code>3.1.3</code> をこの問題の修正版として挙げている。自分の依存がどの系列に属し、この修正を含むかを確認しよう。<a href="https://github.com/cure53/DOMPurify/security/advisories/GHSA-gx9m-whjm-85jf">DOMPurify公式アドバイザリ</a></p>
+        <p>以下の課題では、アドバイザリが参照する2.x向け修正と、同じコミットの回帰テストを読む。コードをコピーする前に、どの条件を守るための変更かを言葉にする。</p>
+        <ol>
+            <li>修正の <code>MAX_NESTING_DEPTH</code> を探す。深さをどこで数え、どの条件で要素を除去するかを記録する。</li>
+            <li><code>__removalCount</code> が増える場所を探す。親要素が除去されて子が移動した後も、元の深さを追う必要を説明する。</li>
+            <li>回帰テストの <code>nesting-based mXSS 1/3</code> を読む。入れ子の数が496・500・502の例とtemplateを含む例で、期待する出力がどう変わるか比較する。</li>
+            <li>同じテスト群の <code>2/3</code> を読む。form内のname属性と、深さ管理に使う参照の関係を説明する。</li>
+            <li>アプリの依存を更新した後に、既存の加工済みHTML、別レンダラー、正常な装飾のどれを再テストするか選ぶ。その後のアドバイザリも確認して導入版を決める。</li>
+        </ol>
+        <details><summary>修正を読むときの着目点を確認する</summary><p>参照した修正では深さの上限を500とし、移動前の階層も考慮して深く入れ子になった要素を除去する。回帰テストは上限付近、template、formの名前付き参照を含む入力を扱う。この値はその修正の実装条件であり、アプリ側の入力長制限と同じ意味にはならない。再現にはライブラリ版、パーサー、設定、挿入先まで対応させる。</p></details>
+        <p class="source"><a href="https://github.com/cure53/DOMPurify/commit/0ef5e537a514f904b6aa1d7ad9e749e365d7185f">公式修正コミット</a> ／ <a href="https://github.com/cure53/DOMPurify/blob/0ef5e537a514f904b6aa1d7ad9e749e365d7185f/test/test-suite.js#L2098">修正と同じ時点の回帰テスト</a></p>
         <p><a href="../labs/xss-flow.html#sanitize">許可タグと属性を操作する実習</a> ／ <a href="../labs/xss-flow.html#mutation">表の再解析を比べる実習</a></p>
         <p class="source"><a href="https://github.com/cure53/DOMPurify#is-there-any-foot-gun-potential">DOMPurifyの処理後変更に関する説明</a> ／ <a href="https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md#html-sanitization">OWASP HTML Sanitization</a></p>
     </section>
@@ -396,6 +420,27 @@ window.addEventListener('message', event =&gt; {
 
 片付け
   作成したデータのID、削除方法と残存確認</code></pre>
+        <h3>架空の会員投稿アプリで、調査メモを報告へまとめる</h3>
+        <p>以下は教材用に作った <code>https://example.test</code> の架空例。データID、HTTP断片、観察結果も説明のための設定であり、実在サービスへの診断記録ではない。AとBはそれぞれ投稿権限・閲覧権限を持つ検査用会員とする。</p>
+        <details><summary>完成例を開く　保存要求から修正後の再訪まで</summary>
+            <p><strong>調査メモ。</strong> Aが会員向け投稿を作るとID 41が返る。Bは別のブラウザープロファイルでログインし、通常の投稿一覧から詳細を開く。HTTP断片では、認証情報など関係しないヘッダーを省略している。</p>
+<pre><code>POST /api/notes HTTP/1.1
+Host: example.test
+Content-Type: application/json
+
+{&quot;body&quot;: &quot;&lt;img src=&#x27;/missing-training-image&#x27; onerror=\&quot;console.log(&#x27;training-note-41&#x27;, location.origin)\&quot;&gt;&quot;}</code></pre>
+            <p>Bの最初のHTMLでは投稿欄は空で、後から次のAPI応答を受け取る。応答をJSONとして読むだけの段階では、bodyは文字列のまま。</p>
+<pre><code>GET /api/notes/41 HTTP/1.1
+Host: example.test
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{&quot;id&quot;: 41, &quot;body&quot;: &quot;&lt;img src=&#x27;/missing-training-image&#x27; onerror=\&quot;console.log(&#x27;training-note-41&#x27;, location.origin)\&quot;&gt;&quot;}</code></pre>
+            <p>描画処理は <code>document.querySelector('#note-body').innerHTML = note.body</code>。この例では文書にインラインイベントを拒否するCSPやsandboxはなく、存在しない画像の読み込み失敗でイベントが発火する。BのConsoleに <code>training-note-41 https://example.test</code> が出る。経路は「AのPOST本文 → 保存 → BのJSON取得 → body → innerHTML」。</p>
+            <p><strong>短い報告。</strong> 件名は「会員投稿の詳細表示で、投稿者Aの入力が閲覧者Bの文書内で実行されるStored DOM XSS」。再現手順は、Aで上記投稿を作成し、Bの別プロファイルでID 41を通常閲覧すること。HTTP応答、描画行、Bの実行マーカーを添付する。この例で確認したのは会員Bのoriginでの実行まで。管理者への到達、秘密値の読取、アカウント乗っ取りは未検証と記載する。</p>
+            <p><strong>修正と再テスト。</strong> このアプリの投稿仕様は本文を原文どおりに表示すること。描画を <code>document.querySelector('#note-body').textContent = note.body</code> に変更する。修正前に保存したID 41をBで再訪すると、タグを含む本文が文字として見え、img要素と実行マーカーは生成されない。新規投稿、日本語、引用符の表示も確認し、ID 41を削除して片付ける。</p>
+        </details>
         <p>同じ関数を直せば解消する複数の表示先は、共通原因と各到達経路を整理して報告する。別原因と判断する場合は、入力・sink・修正箇所がどこで分かれるかを示す。</p>
         <p class="source"><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie#httponly">MDN HttpOnly</a> ／ <a href="https://portswigger.net/web-security/cross-site-scripting#impact-of-xss-vulnerabilities">PortSwigger XSS impact</a> ／ <a href="50-report-writing.html">Report Writing教材</a> ／ <a href="51-severity-cvss.html">Severity教材</a></p>
     </section>

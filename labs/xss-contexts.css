@@ -1,0 +1,23 @@
+.experiment label { display: block; margin: .9rem 0 .3rem; font-weight: 600; }
+.experiment :is(textarea, select) { width: 100%; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: .6rem; font: inherit; }
+.experiment textarea { resize: vertical; }
+#payload { font-family: ui-monospace, monospace; }
+#task-title { margin-top: 1.5rem; }
+.flow { display: grid; grid-template-columns: 5em 1fr; gap: .4rem .75rem; margin: 1rem 0; }
+.flow dt { color: var(--text-muted); }
+.actions { display: flex; flex-wrap: wrap; gap: .7rem; margin: .8rem 0; }
+.actions button { padding: .6rem 1rem; background: var(--accent); color: var(--bg); border: 1px solid var(--accent); border-radius: 5px; cursor: pointer; font: inherit; font-weight: 600; }
+.actions .secondary { color: var(--text); background: var(--surface); border-color: var(--border); }
+details { padding: .75rem 0; border-top: 1px solid var(--border); }
+summary { color: var(--accent); cursor: pointer; }
+details[open] summary { margin-bottom: .65rem; }
+.comparisons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.result { margin: 0 0 1rem; min-width: 0; padding: 1.2rem; }
+.section .result h3 { margin-top: 0; }
+.evidence { min-height: 3.2em; margin: .8rem 0; color: var(--text-muted); }
+.evidence.observed { color: var(--yellow); }
+.frame-host iframe { width: 100%; height: 180px; border: 1px solid var(--border); border-radius: 4px; background: #fff; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+p + p { margin-top: .8rem; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 700px) { .comparisons { grid-template-columns: 1fr; } }

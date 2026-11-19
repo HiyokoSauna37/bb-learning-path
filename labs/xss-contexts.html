@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>XSS コンテキスト実験室</title>
+    <link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+    <link rel="stylesheet" href="../assets/style.css">
+    <link rel="stylesheet" href="xss-contexts.css">
+    <script defer src="vendor/dompurify/purify.min.js"></script>
+    <script defer src="xss-contexts.js"></script>
+</head>
+<body>
+<main class="container">
+    <nav class="breadcrumb"><a href="../modules/10-xss.html">XSS基礎</a> ／ <a href="../modules/10-xss-practical.html">実務ガイド</a> ／ コンテキスト実験室</nav>
+    <header class="page-header"><h1>XSS コンテキスト実験室</h1><p class="subtitle">同じ文字列を別の場所に渡したら、どこでコードとして解釈されるだろう？</p></header>
+    <p>9つの問題で入力を編集し、変更前と変更後のコード、表示、最終DOMを並べて比較する。ラボ内の <code>proof()</code> を入力経由で呼び出せると、実際の実行を観測した記録が付く。まずは予想を書き、必要になったらヒントを開こう。</p>
+    <p>実行画面は <code>sandbox="allow-scripts"</code> のiframe。フレーム内のスクリプトは不透明なoriginで動き、表示されるoriginは <code>null</code> になる。画像の読込や通信はCSPで制限している。ここで調べるのはパーサーとコードの動作。HTTP応答の実測、保存後の別ユーザーへの到達や権限は <a href="xss-flow.html#http">HTTP実習</a>と<a href="../modules/10-xss-practical.html#stored">実務ガイド</a>で学ぶ。</p>
+    <noscript><p>この演習ではJavaScriptを有効にしてください。</p></noscript>
+
+    <section class="section experiment" aria-labelledby="task-title">
+        <form id="experiment-form">
+            <label for="task">問題を選ぶ</label><select id="task"></select>
+            <h2 id="task-title"></h2><p id="task-prompt"></p>
+            <dl class="flow"><dt>入力元</dt><dd>このページの入力欄</dd><dt>解釈先</dt><dd id="sink"></dd><dt>達成条件</dt><dd id="goal"></dd></dl>
+            <label for="prediction">実行前の予想</label><textarea id="prediction" rows="2" placeholder="どちらでproof()が動く？ どの操作が必要？"></textarea>
+            <label for="payload">送る文字列</label><textarea id="payload" rows="4" spellcheck="false" maxlength="4000"></textarea>
+            <div class="actions"><button type="submit">入力を送って比較する</button><button type="button" id="reset" class="secondary">この問題を初期化</button></div>
+        </form>
+        <details id="hint"><summary>ヒント</summary><p id="hint-text"></p></details>
+        <details id="solution"><summary>検査用の入力例と解説</summary><pre id="example"></pre><p id="explanation"></p></details>
+        <p id="run-status" role="status" aria-live="polite">問題を選んで、入力を送ってください。</p>
+    </section>
+
+    <section class="section" aria-label="実行結果の比較">
+        <h2>入力から実行までを比較する</h2>
+        <div class="comparisons">
+            <article class="card result" id="before"><h3 id="before-label">変更前</h3><p class="evidence" id="before-status" role="status">未実行</p><div id="before-frame" class="frame-host"></div>
+                <details><summary>実行するコード・マークアップ</summary><pre id="before-code"></pre></details>
+                <details><summary>最終DOMと実行ログ</summary><pre id="before-dom"></pre><ul id="before-events"></ul></details>
+            </article>
+            <article class="card result" id="after"><h3 id="after-label">変更後</h3><p class="evidence" id="after-status" role="status">未実行</p><div id="after-frame" class="frame-host"></div>
+                <details><summary>実行するコード・マークアップ</summary><pre id="after-code"></pre></details>
+                <details><summary>最終DOMと実行ログ</summary><pre id="after-dom"></pre><ul id="after-events"></ul></details>
+            </article>
+        </div>
+        <p>「proof()未観測」の場合は、必要なフォーカスやボタン操作、生成されたDOM、CSP違反、構文エラーを見比べる。この1回の非実行だけで、その入力先が安全であるとは判定できない。問題を切り替えるか初期化すると、入力と実行結果はリセットされる。</p>
+    </section>
+    <section class="section"><h2>観察を言葉にする</h2><ol><li>値が通ったパーサーを順に挙げる。</li><li>コード実行を観測した側と、必要だったイベントや操作を書く。</li><li>変更後にHTMLの構造が残るか、文字として表示されるかを比べる。</li><li>実サイトで同じ問題を報告するため、次に必要なHTTP・origin・閲覧者の証拠を挙げる。</li></ol>
+        <p><a href="../modules/10-xss-browser.html">発展編で解析順序と防御の条件を読む</a> ／ <a href="../modules/10-xss-practical.html#sanitizer-patch-reading">mXSSの公開修正を読む</a> ／ <a href="../modules/10-xss-practical.html#retest">修正後の再テストへ</a></p>
+    </section>
+    <nav class="page-nav"><a href="xss-flow.html">← データフロー実習</a><a href="../modules/10-xss-practical.html">XSS実務ガイド →</a></nav>
+</main>
+</body>
+</html>

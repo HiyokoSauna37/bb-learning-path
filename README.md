@@ -69,3 +69,5 @@ Educational content. Feel free to learn from it.
 [XSS データフロー実習](labs/xss-flow.html)では、HTTP で検索と投稿の経路を比較し、ブラウザーで URL の入力元、DOMPurify の許可設定、再解析後の DOM を観察します。HTTP の2題はリポジトリのルートで `python3 labs/xss_http.py` を起動します。残りの3題は HTML を直接開いて取り組めます。
 
 [XSS 実務ガイド](modules/10-xss-practical.html)は、WebPT・バグバウンティ向けの入力調査、コンテキストと解析順序、Burp・DevTools、postMessage、サニタイザー、CSP、アップロード、影響評価と報告、再テストを17項目で扱います。ケース問題8問とAcademyへの学習ルートも収録しています。
+
+[XSS コンテキスト実験室](labs/xss-contexts.html)では9問で入力を変え、sandboxed iframe内のコード実行・最終DOM・CSP違反を変更前後で比較できます。HTMLを直接開いて動作します。[XSS 発展編](modules/10-xss-browser.html)は解析順序、SSR、CSP読解、origin/site、DOM clobbering、URL設計など8節とレビュー問題4問を収録しています。
