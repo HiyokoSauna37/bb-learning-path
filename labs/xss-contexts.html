@@ -14,16 +14,28 @@
 <main class="container">
     <nav class="breadcrumb"><a href="../modules/10-xss.html">XSS基礎</a> ／ <a href="../modules/10-xss-practical.html">実務ガイド</a> ／ コンテキスト実験室</nav>
     <header class="page-header"><h1>XSS コンテキスト実験室</h1><p class="subtitle">同じ文字列を別の場所に渡したら、どこでコードとして解釈されるだろう？</p></header>
-    <p>9つの問題で入力を編集し、変更前と変更後のコード、表示、最終DOMを並べて比較する。ラボ内の <code>proof()</code> を入力経由で呼び出せると、実際の実行を観測した記録が付く。まずは予想を書き、必要になったらヒントを開こう。</p>
-    <p>実行画面は <code>sandbox="allow-scripts"</code> のiframe。フレーム内のスクリプトは不透明なoriginで動き、表示されるoriginは <code>null</code> になる。画像の読込や通信はCSPで制限している。ここで調べるのはパーサーとコードの動作。HTTP応答の実測、保存後の別ユーザーへの到達や権限は <a href="xss-flow.html#http">HTTP実習</a>と<a href="../modules/10-xss-practical.html#stored">実務ガイド</a>で学ぶ。</p>
+    <p>同じ入力を2つの実装へ送り、表示とコードの動作を比較する。第1問は下の手順に沿って2回試そう。<code>proof()</code> は、コードが実行されたことを結果欄へ記録する、この演習用の関数。</p>
     <noscript><p>この演習ではJavaScriptを有効にしてください。</p></noscript>
 
     <section class="section experiment" aria-labelledby="task-title">
         <form id="experiment-form">
             <label for="task">問題を選ぶ</label><select id="task"></select>
             <h2 id="task-title"></h2><p id="task-prompt"></p>
+            <section id="first-task-guide" class="guided-task" aria-labelledby="guide-title" hidden>
+                <h3 id="guide-title">第1問の進め方</h3>
+                <ol>
+                    <li><strong>まず、HTMLのタグを送る。</strong> <code>&lt;b&gt;京都&lt;/b&gt;</code> の <code>b</code> は文字を太字にするタグ。「変更前」で京都が太字になり、「変更後」でタグを含む全文が文字として見えるかを比べよう。
+                        <button type="button" id="try-markup">① 太字の入力を送る</button>
+                    </li>
+                    <li><strong>次に、JavaScriptを送る。</strong> <code>&lt;script&gt;proof()&lt;/script&gt;</code> を送ると、script要素の中の処理を実行できるか確認できる。「変更前」の結果に「proof()の実行を観測」と出て、「変更後」には入力したコードが文字として見えるかを確認しよう。
+                        <button type="button" id="try-script">② コード実行の入力を送る</button>
+                    </li>
+                </ol>
+                <p>上のボタンは「送る文字列」を入れ替えて、そのまま送信する。送信後は下の比較結果を見る。②では、白い表示領域の上にある実行記録にも注目しよう。</p>
+                <p><strong>この問で覚えること。</strong> 入力をHTMLとして読む実装では、入力したタグや処理がページの一部になる。文字として表示する実装では、入力した内容を原文どおりに読める。</p>
+            </section>
             <dl class="flow"><dt>入力元</dt><dd>このページの入力欄</dd><dt>解釈先</dt><dd id="sink"></dd><dt>達成条件</dt><dd id="goal"></dd></dl>
-            <label for="prediction">実行前の予想</label><textarea id="prediction" rows="2" placeholder="どちらでproof()が動く？ どの操作が必要？"></textarea>
+            <label for="prediction">実行前の予想（任意）</label><textarea id="prediction" rows="2" placeholder="どちらでproof()が動く？ どの操作が必要？"></textarea>
             <label for="payload">送る文字列</label><textarea id="payload" rows="4" spellcheck="false" maxlength="4000"></textarea>
             <div class="actions"><button type="submit">入力を送って比較する</button><button type="button" id="reset" class="secondary">この問題を初期化</button></div>
         </form>
@@ -32,8 +44,9 @@
         <p id="run-status" role="status" aria-live="polite">問題を選んで、入力を送ってください。</p>
     </section>
 
-    <section class="section" aria-label="実行結果の比較">
+    <section class="section" id="comparison" aria-label="実行結果の比較">
         <h2>入力から実行までを比較する</h2>
+        <p id="first-task-return" hidden><a href="#first-task-guide">第1問の手順へ戻って、次の入力を試す ↑</a></p>
         <div class="comparisons">
             <article class="card result" id="before"><h3 id="before-label">変更前</h3><p class="evidence" id="before-status" role="status">未実行</p><div id="before-frame" class="frame-host"></div>
                 <details><summary>実行するコード・マークアップ</summary><pre id="before-code"></pre></details>
@@ -45,6 +58,7 @@
             </article>
         </div>
         <p>「proof()未観測」の場合は、必要なフォーカスやボタン操作、生成されたDOM、CSP違反、構文エラーを見比べる。この1回の非実行だけで、その入力先が安全であるとは判定できない。問題を切り替えるか初期化すると、入力と実行結果はリセットされる。</p>
+        <details><summary>実行環境とoriginの補足</summary><p>実行画面は <code>sandbox="allow-scripts"</code> のiframe。フレーム内のスクリプトは不透明なoriginで動き、表示されるoriginは <code>null</code> になる。画像の読込や通信はCSPで制限している。ここで調べるのはパーサーとコードの動作。HTTP応答の実測、保存後の別ユーザーへの到達や権限は <a href="xss-flow.html#http">HTTP実習</a>と<a href="../modules/10-xss-practical.html#stored">実務ガイド</a>で学ぶ。</p></details>
     </section>
     <section class="section"><h2>観察を言葉にする</h2><ol><li>値が通ったパーサーを順に挙げる。</li><li>コード実行を観測した側と、必要だったイベントや操作を書く。</li><li>変更後にHTMLの構造が残るか、文字として表示されるかを比べる。</li><li>実サイトで同じ問題を報告するため、次に必要なHTTP・origin・閲覧者の証拠を挙げる。</li></ol>
         <p><a href="../modules/10-xss-browser.html">発展編で解析順序と防御の条件を読む</a> ／ <a href="../modules/10-xss-practical.html#sanitizer-patch-reading">mXSSの公開修正を読む</a> ／ <a href="../modules/10-xss-practical.html#retest">修正後の再テストへ</a></p>

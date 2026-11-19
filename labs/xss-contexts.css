@@ -8,6 +8,13 @@
 .actions { display: flex; flex-wrap: wrap; gap: .7rem; margin: .8rem 0; }
 .actions button { padding: .6rem 1rem; background: var(--accent); color: var(--bg); border: 1px solid var(--accent); border-radius: 5px; cursor: pointer; font: inherit; font-weight: 600; }
 .actions .secondary { color: var(--text); background: var(--surface); border-color: var(--border); }
+.guided-task { margin: 1rem 0; padding: .9rem 1rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.guided-task[hidden] { display: none; }
+.guided-task h3 { margin-top: 0; }
+.guided-task li { margin-bottom: 1rem; }
+.guided-task button { display: block; margin-top: .6rem; padding: .5rem .7rem; border: 1px solid var(--accent); border-radius: 5px; background: var(--accent); color: var(--bg); cursor: pointer; font: inherit; }
+#comparison { scroll-margin-top: 1rem; }
+#first-task-return { margin-bottom: 1rem; }
 details { padding: .75rem 0; border-top: 1px solid var(--border); }
 summary { color: var(--accent); cursor: pointer; }
 details[open] summary { margin-bottom: .65rem; }

@@ -18,9 +18,11 @@ const tasks = [
     {
         id: 'document',
         title: '初期HTMLでの本文表示',
-        prompt: '受け取った検索語を初期HTMLに埋め込む画面。表示が太字になることと、コードが動くことの違いを調べよう。',
+        prompt: '「送る文字列」に書いた内容を、ページへ直接入れる実装と、文字として表示する処理を加えた実装で比べる。下の①、②の順に試そう。',
         sink: '生成された文書をブラウザーが最初に解析',
-        goal: '変更前でproof()を呼び、変更後の文字表示と比較する。',
+        goal: '2つの入力を順に送り、太字表示とコード実行の結果を説明する。',
+        beforeLabel: '変更前 — HTMLとして読む',
+        afterLabel: '変更後 — 文字として表示',
         seed: '<b>京都</b>',
         example: '<script>proof()</script>',
         hint: '最初の文書として解析されるscript要素は、CSPが許す場合に実行される。',
@@ -180,6 +182,8 @@ const panels = ['before', 'after'];
 function renderTask() {
     currentRun = null;
     const task = tasks[Number(element('task').value)];
+    element('first-task-guide').hidden = task.id !== 'document';
+    element('first-task-return').hidden = task.id !== 'document';
     element('task-title').textContent = task.title;
     element('task-prompt').textContent = task.prompt;
     element('sink').textContent = task.sink;
@@ -278,6 +282,7 @@ function runExperiment(event) {
             frame.srcdoc = doc.html;
         });
         element('run-status').textContent = '入力を送りました。必要な操作は実行画面の中で行い、DOMとログを比較してください。';
+        element('comparison').scrollIntoView({ block: 'start' });
     } catch {
         currentRun = null;
         element('run-status').textContent = '実行できませんでした。ページを再読み込みして依存ファイルを確認してください。';
@@ -326,4 +331,12 @@ tasks.forEach((task, index) => element('task').add(new Option((index + 1) + '. '
 element('task').addEventListener('change', renderTask);
 element('reset').addEventListener('click', renderTask);
 element('experiment-form').addEventListener('submit', runExperiment);
+element('try-markup').addEventListener('click', () => {
+    element('payload').value = tasks[0].seed;
+    element('experiment-form').requestSubmit();
+});
+element('try-script').addEventListener('click', () => {
+    element('payload').value = tasks[0].example;
+    element('experiment-form').requestSubmit();
+});
 renderTask();
